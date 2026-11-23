@@ -1,0 +1,1 @@
+# AbfindungsOptimizer2027-iOS-Gemini
