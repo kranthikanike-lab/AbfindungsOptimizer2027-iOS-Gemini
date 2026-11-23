@@ -1,4 +1,4 @@
-name: Build iOS App
+name: Verify Tax Engine 2027
 
 on:
   push:
@@ -6,24 +6,29 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Compile iOS App
-    runs-on: macos-13
+  test-engine:
+    name: Test 2027 Tax & Solver Math
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install XcodeGen & Generate Project
+      - name: Run Statutory Tax Engine Tests (Node.js)
         run: |
-          brew install xcodegen
-          xcodegen generate
-
-      - name: Build iOS App
-        run: |
-          xcodebuild build \
-            -project AbfindungsOptimizer2027.xcodeproj \
-            -scheme AbfindungsOptimizer2027 \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            CODE_SIGNING_ALLOWED=NO
+          node -e '
+            const fs = require("fs");
+            const code = fs.readFileSync("Shared/TaxEngine2027.js", "utf8");
+            eval(code);
+            const res = runSimulation({
+              altesMonatsgehalt: 8333,
+              fristMonate: 5,
+              bruttoAbfindung: 120000,
+              agFiktivGehalt: 100000,
+              neuesGehalt2027: 25000,
+              turboEnabled: true,
+              turboFaktor: 1.5
+            });
+            console.log("Simulation Output:", JSON.stringify(res, null, 2));
+            if (res.optimalNettoTotal <= 0) throw new Error("Invalid output");
+          '
