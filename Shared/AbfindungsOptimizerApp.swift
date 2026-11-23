@@ -1,0 +1,231 @@
+import SwiftUI
+import JavaScriptCore
+import Charts
+
+enum PreExitGkvStatus: String, CaseIterable, Identifiable, Codable {
+    case pflicht = "Pflichtversichert (§ 19 Abs. 2 SGB V)"
+    case freiwillig = "Freiwillig gesetzlich"
+    case pkv = "Privat (PKV)"
+    var id: String { rawValue }
+}
+
+struct SimulationInput: Codable, Equatable {
+    var altesMonatsgehalt: Double = 8_333
+    var fristMonate: Int = 5
+    var bruttoAbfindung: Double = 120_000
+    var agFiktivGehalt: Double = 100_000
+    var neuesGehalt2027: Double = 25_000
+    var kvZusatzbeitragPct: Double = 2.5
+    var preExitGkv: PreExitGkvStatus = .pflicht
+    var isSplitting: Bool = false
+    var partnerGehalt2027: Double = 0
+    var churchRate: Double = 0.0
+    var turboEnabled: Bool = false
+    var turboFaktor: Double = 1.5
+    var alg1SatzPct: Double = 60.0
+    var includeAlg1Loss: Bool = false
+    var bavAmount: Double = 0
+    var drvV0210Amount: Double = 0
+    var ruerupAmount: Double = 0
+    var pvIabPurchase: Double = 0
+    var monthlyExpenses: Double = 3_500
+    var alg1ClaimMonths: Int = 12
+    var postAlg1GkvMode: String = "Mindestbeitrag"
+}
+
+struct WaterfallStep: Identifiable, Decodable {
+    let id: String
+    let label: String
+    let delta: Double
+    let isPositive: Bool
+}
+
+struct RunwayPhaseSegment: Identifiable, Decodable {
+    let id: String
+    let strategy: String
+    let phaseName: String
+    let startMonth: Double
+    let durationMonths: Double
+}
+
+struct SimulationResult: Decodable {
+    let sofortNetto2027: Double
+    let finanzamtRefundOct2028: Double
+    let optimalNettoTotal: Double
+    let ruerupCapRemaining: Double
+    let iabSweetSpotDeduction: Double
+    let partnerSplittingBreakEvenMax: Double
+    let ruhenszeitMonths: Int
+    let waterfallSteps: [WaterfallStep]
+    let standardRunwayMonths: Double
+    let sprinterRunwayMonths: Double
+    let runwaySegments: [RunwayPhaseSegment]
+}
+
+@Observable
+final class TaxEngineBridge {
+    private let context = JSContext()
+    var input = SimulationInput()
+    private(set) var result = SimulationResult(
+        sofortNetto2027: 0, finanzamtRefundOct2028: 0, optimalNettoTotal: 0,
+        ruerupCapRemaining: 0, iabSweetSpotDeduction: 0, partnerSplittingBreakEvenMax: 0,
+        ruhenszeitMonths: 0, waterfallSteps: [], standardRunwayMonths: 0,
+        sprinterRunwayMonths: 0, runwaySegments: []
+    )
+
+    init() {
+        if let url = Bundle.main.url(forResource: "TaxEngine2027", withExtension: "js"),
+           let script = try? String(contentsOf: url, encoding: .utf8) {
+            context?.evaluateScript(script)
+        }
+        recalculate()
+    }
+
+    func recalculate() {
+        guard let data = try? JSONEncoder().encode(input),
+              let json = String(data: data, encoding: .utf8),
+              let raw = context?.evaluateScript("JSON.stringify(runSimulation(\(json)))")?.toString(),
+              let outData = raw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(SimulationResult.self, from: outData) else { return }
+        result = decoded
+    }
+
+    func applyPreset(_ name: String) {
+        switch name {
+        case "Standard":
+            input = SimulationInput(altesMonatsgehalt: 8_333, fristMonate: 5, bruttoAbfindung: 120_000, agFiktivGehalt: 100_000, neuesGehalt2027: 25_000, turboEnabled: false)
+        case "Sprinter":
+            input = SimulationInput(altesMonatsgehalt: 9_000, fristMonate: 6, bruttoAbfindung: 140_000, agFiktivGehalt: 108_000, neuesGehalt2027: 0, turboEnabled: true, turboFaktor: 1.5, bavAmount: 25_000)
+        case "Privatier":
+            input = SimulationInput(altesMonatsgehalt: 10_500, fristMonate: 6, bruttoAbfindung: 240_000, agFiktivGehalt: 126_000, neuesGehalt2027: 0, isSplitting: true, partnerGehalt2027: 15_000, turboEnabled: true, bavAmount: 50_976, ruerupAmount: 30_000, pvIabPurchase: 120_000)
+        default: break
+        }
+        recalculate()
+    }
+}
+
+@main
+struct AbfindungsOptimizerApp: App {
+    @State private var engine = TaxEngineBridge()
+    var body: some Scene {
+        WindowGroup { MainView(engine: engine) }
+    }
+}
+
+struct MainView: View {
+    @Bindable var engine: TaxEngineBridge
+
+    private func eur(_ v: Double) -> String {
+        v.formatted(.currency(code: "EUR").precision(.fractionLength(0)))
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Schnell-Szenarien (1-Click Presets)") {
+                    HStack {
+                        ForEach(["Standard", "Sprinter", "Privatier"], id: \.self) { preset in
+                            Button(preset) { engine.applyPreset(preset) }
+                                .buttonStyle(.bordered)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                }
+
+                Section("A · Basisdaten & Sprinter 2027") {
+                    sliderRow("Abfindung Brutto", value: $engine.input.bruttoAbfindung, range: 10_000...500_000, step: 2_500)
+                    sliderRow("Altes Monatsgehalt", value: $engine.input.altesMonatsgehalt, range: 2_500...25_000, step: 250)
+                    Stepper("Kündigungsfrist: \(engine.input.fristMonate) Monate", value: $engine.input.fristMonate, in: 1...12)
+                    sliderRow("Neues Gehalt 2027", value: $engine.input.neuesGehalt2027, range: 0...150_000, step: 1_000)
+                    Picker("Vor-Austritt GKV", selection: $engine.input.preExitGkv) {
+                        ForEach(PreExitGkvStatus.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Toggle("Sprinter-Option (Vorzeitiger Austritt)", isOn: $engine.input.turboEnabled)
+                    if engine.input.turboEnabled {
+                        sliderRow("Sprinter-Faktor (\(String(format: "%.1fx", engine.input.turboFaktor)))", value: $engine.input.turboFaktor, range: 0.5...2.5, step: 0.1, isCurrency: false)
+                        Text("ALG-1 Ruhenszeit (§ 158 SGB III): \(engine.result.ruhenszeitMonths) Monate")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Toggle("Zusammenveranlagung (Splitting)", isOn: $engine.input.isSplitting)
+                    if engine.input.isSplitting {
+                        sliderRow("Gehalt Ehepartner 2027", value: $engine.input.partnerGehalt2027, range: 0...180_000, step: 1_000)
+                        Text("Splitting-Vorteil bis ca. \(eur(engine.result.partnerSplittingBreakEvenMax)) Partner-Brutto")
+                            .font(.caption).foregroundStyle(.blue)
+                    }
+                }
+
+                Section("B · Steuer-Optimierung (§ 3 Nr. 63 / § 10 / § 7g EStG)") {
+                    sliderRow("bAV-Einzahlung (max. 50.976 €)", value: $engine.input.bavAmount, range: 0...50_976, step: 500)
+                    sliderRow("DRV V0210 Ausgleich (50% frei)", value: $engine.input.drvV0210Amount, range: 0...80_000, step: 500)
+                    sliderRow("Rürup / Basisrente (frei: \(eur(engine.result.ruerupCapRemaining)))", value: $engine.input.ruerupAmount, range: 0...64_000, step: 500)
+                    sliderRow("PV-Investition (50% IAB)", value: $engine.input.pvIabPurchase, range: 0...400_000, step: 2_500)
+                    Button("🎯 IAB Sweet-Spot anwenden (zvE → 0 €)") {
+                        engine.input.pvIabPurchase = min(400_000, engine.result.iabSweetSpotDeduction * 2)
+                        engine.recalculate()
+                    }
+                    .foregroundStyle(.blue)
+                }
+
+                if engine.input.turboEnabled {
+                    Section("Sprinter Netto-Brücke") {
+                        Chart(engine.result.waterfallSteps) { step in
+                            BarMark(x: .value("Betrag", step.delta), y: .value("Faktor", step.label))
+                                .foregroundStyle(step.isPositive ? Color.green : Color.red)
+                        }
+                        .frame(height: 190)
+                    }
+                }
+
+                Section("C · Finanzielle Reichweite (Runway)") {
+                    sliderRow("Monatliche Ausgaben", value: $engine.input.monthlyExpenses, range: 1_500...12_000, step: 250)
+                    Chart(engine.result.runwaySegments) { seg in
+                        BarMark(
+                            xStart: .value("Start", seg.startMonth),
+                            xEnd: .value("Ende", seg.startMonth + seg.durationMonths),
+                            y: .value("Strategie", seg.strategy)
+                        )
+                        .foregroundStyle(by: .value("Phase", seg.phaseName))
+                    }
+                    .frame(height: 120)
+                    Text("Reichweite: Standard \(engine.result.standardRunwayMonths, specifier: "%.1f") Mo · Sprinter \(engine.result.sprinterRunwayMonths, specifier: "%.1f") Mo")
+                        .font(.caption.bold())
+                }
+            }
+            .navigationTitle("Abfindung 2027")
+            .onChange(of: engine.input) { _, _ in engine.recalculate() }
+            .safeAreaInset(edge: .bottom) {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Sofort 2027").font(.caption2).foregroundStyle(.secondary)
+                        Text(eur(engine.result.sofortNetto2027)).font(.subheadline.bold())
+                    }
+                    Spacer()
+                    VStack(alignment: .leading) {
+                        Text("FA Okt. 2028").font(.caption2).foregroundStyle(.secondary)
+                        Text("+" + eur(engine.result.finanzamtRefundOct2028)).font(.subheadline.bold()).foregroundStyle(.green)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing) {
+                        Text("Optimal-Netto").font(.caption2).foregroundStyle(.secondary)
+                        Text(eur(engine.result.optimalNettoTotal)).font(.headline.bold()).foregroundStyle(.blue)
+                    }
+                }
+                .padding()
+                .background(.ultraThinMaterial)
+                .overlay(Divider(), alignment: .top)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, isCurrency: Bool = true) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title).font(.subheadline)
+                Spacer()
+                Text(isCurrency ? eur(value.wrappedValue) : String(format: "%.1f", value.wrappedValue)).bold()
+            }
+            Slider(value: value, in: range, step: step)
+        }
+    }
+}
