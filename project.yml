@@ -1,6 +1,6 @@
 name: AbfindungsOptimizer2027
 options:
-  bundleIdPrefix: de.abfindungsoptimizer
+  bundleIdPrefix: com.kranthikanike
   deploymentTarget:
     iOS: "17.0"
 targets:
@@ -8,11 +8,13 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: Shared
-    resources:
-      - path: Shared/TaxEngine2027.js
+      - Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: de.abfindungsoptimizer.pro2027
+        PRODUCT_BUNDLE_IDENTIFIER: com.kranthikanike.abfindungsoptimizer2027
+        INFOPLIST_FILE: Shared/Info.plist
+        GENERATE_INFOPLIST_FILE: YES
+        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "27.0.1"
         TARGETED_DEVICE_FAMILY: "1,2"
-        INFOPLIST_KEY_UILaunchScreen_Generation: true
+
