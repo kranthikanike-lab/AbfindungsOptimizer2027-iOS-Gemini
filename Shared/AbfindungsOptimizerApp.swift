@@ -9,6 +9,25 @@ enum PreExitGkvStatus: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 }
 
+enum SolverMode: String, CaseIterable, Identifiable, Codable {
+    case manual = "Manuell"
+    case optimal = "Optimal-Netto"
+    case liquidity = "Liquiditäts-Fokus"
+    case retirement = "Altersvorsorge"
+    case custom = "Eigene Priorität"
+    var id: String { rawValue }
+
+    var engineKey: String {
+        switch self {
+        case .manual: return "manual"
+        case .optimal: return "optimal"
+        case .liquidity: return "liquidity"
+        case .retirement: return "retirement"
+        case .custom: return "custom"
+        }
+    }
+}
+
 struct SimulationInput: Codable, Equatable {
     var altesMonatsgehalt: Double = 8_333
     var fristMonate: Int = 5
@@ -24,6 +43,8 @@ struct SimulationInput: Codable, Equatable {
     var turboFaktor: Double = 1.5
     var alg1SatzPct: Double = 60.0
     var includeAlg1Loss: Bool = false
+    var solverMode: String = "manual"
+    var customSolverOrder: [String] = ["bav", "drv", "ruerup", "iab"]
     var bavAmount: Double = 0
     var drvV0210Amount: Double = 0
     var ruerupAmount: Double = 0
@@ -31,6 +52,8 @@ struct SimulationInput: Codable, Equatable {
     var monthlyExpenses: Double = 3_500
     var alg1ClaimMonths: Int = 12
     var postAlg1GkvMode: String = "Mindestbeitrag"
+    var newJobGrossAnnual: Double = 65_000
+    var salaryGrowthPct: Double = 2.0
 }
 
 struct WaterfallStep: Identifiable, Decodable {
@@ -48,6 +71,12 @@ struct RunwayPhaseSegment: Identifiable, Decodable {
     let durationMonths: Double
 }
 
+struct CrossoverPoint: Identifiable, Decodable {
+    var id: Int { year }
+    let year: Int
+    let netDelta: Double
+}
+
 struct SimulationResult: Decodable {
     let sofortNetto2027: Double
     let finanzamtRefundOct2028: Double
@@ -60,17 +89,26 @@ struct SimulationResult: Decodable {
     let standardRunwayMonths: Double
     let sprinterRunwayMonths: Double
     let runwaySegments: [RunwayPhaseSegment]
+    let solvedBav: Double
+    let solvedDrv: Double
+    let solvedRuerup: Double
+    let solvedPvPurchase: Double
+    let crossoverPoints: [CrossoverPoint]
+    let breakEvenYear: Int
 }
 
 @Observable
 final class TaxEngineBridge {
     private let context = JSContext()
     var input = SimulationInput()
+    var selectedSolver: SolverMode = .manual
     private(set) var result = SimulationResult(
         sofortNetto2027: 0, finanzamtRefundOct2028: 0, optimalNettoTotal: 0,
         ruerupCapRemaining: 0, iabSweetSpotDeduction: 0, partnerSplittingBreakEvenMax: 0,
         ruhenszeitMonths: 0, waterfallSteps: [], standardRunwayMonths: 0,
-        sprinterRunwayMonths: 0, runwaySegments: []
+        sprinterRunwayMonths: 0, runwaySegments: [],
+        solvedBav: 0, solvedDrv: 0, solvedRuerup: 0, solvedPvPurchase: 0,
+        crossoverPoints: [], breakEvenYear: -1
     )
 
     init() {
@@ -82,15 +120,23 @@ final class TaxEngineBridge {
     }
 
     func recalculate() {
+        input.solverMode = selectedSolver.engineKey
         guard let data = try? JSONEncoder().encode(input),
               let json = String(data: data, encoding: .utf8),
               let raw = context?.evaluateScript("JSON.stringify(runSimulation(\(json)))")?.toString(),
               let outData = raw.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(SimulationResult.self, from: outData) else { return }
         result = decoded
+        if selectedSolver != .manual {
+            input.bavAmount = decoded.solvedBav
+            input.drvV0210Amount = decoded.solvedDrv
+            input.ruerupAmount = decoded.solvedRuerup
+            input.pvIabPurchase = decoded.solvedPvPurchase
+        }
     }
 
     func applyPreset(_ name: String) {
+        selectedSolver = .manual
         switch name {
         case "Standard":
             input = SimulationInput(altesMonatsgehalt: 8_333, fristMonate: 5, bruttoAbfindung: 120_000, agFiktivGehalt: 100_000, neuesGehalt2027: 25_000, turboEnabled: false)
@@ -108,7 +154,7 @@ final class TaxEngineBridge {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Abfindungs_Optimizer_2027_Report.pdf")
         let reportView = ExecutivePdfReportView(input: input, result: result)
         let renderer = ImageRenderer(content: reportView)
-        renderer.proposedSize = .init(width: 595, height: 842) // A4 points
+        renderer.proposedSize = .init(width: 595, height: 842)
 
         renderer.render { size, context in
             var box = CGRect(origin: .zero, size: size)
@@ -161,7 +207,7 @@ struct ExecutivePdfReportView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("2. Steuer-Optimierung (§ 3 Nr. 63 / § 187a SGB VI / § 10 / § 7g)").font(.headline)
+                Text("2. Steuer-Optimierung (\(input.solverMode.capitalized))").font(.headline)
                 row("bAV-Einzahlung (§ 3 Nr. 63 EStG)", eur(input.bavAmount))
                 row("DRV V0210 Ausgleich (50% steuerfrei)", eur(input.drvV0210Amount))
                 row("Rürup / Basisrente (§ 10 EStG)", eur(input.ruerupAmount))
@@ -169,10 +215,9 @@ struct ExecutivePdfReportView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("3. Finanzielle Reichweite (Runway)").font(.headline)
-                row("Monatliche Lebenshaltungskosten", eur(input.monthlyExpenses))
-                row("Reichweite Standard (Frist absitzen)", String(format: "%.1f Monate", result.standardRunwayMonths))
-                row("Reichweite Sprinter (Sofort-Austritt)", String(format: "%.1f Monate", result.sprinterRunwayMonths))
+                Text("3. Reichweite & Gehalts-Switch Break-Even").font(.headline)
+                row("Reichweite Standard / Sprinter", String(format: "%.1f Mo / %.1f Mo", result.standardRunwayMonths, result.sprinterRunwayMonths))
+                row("Neues Zielgehalt / Break-Even", result.breakEvenYear > 0 ? "\(eur(input.newJobGrossAnnual)) p.a. (Jahr \(result.breakEvenYear))" : "\(eur(input.newJobGrossAnnual)) p.a. (> 15 Jahre)")
             }
 
             Spacer()
@@ -220,6 +265,16 @@ struct MainView: View {
         v.formatted(.currency(code: "EUR").precision(.fractionLength(0)))
     }
 
+    private func leverDisplayName(_ key: String) -> String {
+        switch key {
+        case "bav": return "1. bAV (§ 3 Nr. 63 EStG)"
+        case "drv": return "2. DRV V0210 (§ 187a SGB VI)"
+        case "ruerup": return "3. Rürup / Basisrente (§ 10)"
+        case "iab": return "4. PV-IAB (§ 7g EStG)"
+        default: return key
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -255,12 +310,41 @@ struct MainView: View {
                     }
                 }
 
-                Section("B · Steuer-Optimierung (§ 3 Nr. 63 / § 10 / § 7g EStG)") {
+                Section("B · Auto-Solver & Steuer-Hebel") {
+                    Picker("Optimierungs-Modus", selection: $engine.selectedSolver) {
+                        ForEach(SolverMode.allCases) { Text($0.rawValue).tag($0) }
+                    }
+
+                    if engine.selectedSolver == .custom {
+                        ForEach(Array(engine.input.customSolverOrder.enumerated()), id: \.element) { idx, key in
+                            HStack {
+                                Text("\(idx + 1). \(leverDisplayName(key).dropFirst(3))")
+                                    .font(.subheadline)
+                                Spacer()
+                                if idx > 0 {
+                                    Button {
+                                        engine.input.customSolverOrder.swapAt(idx, idx - 1)
+                                        engine.recalculate()
+                                    } label: { Image(systemName: "arrow.up.circle") }
+                                    .buttonStyle(.borderless)
+                                }
+                                if idx < engine.input.customSolverOrder.count - 1 {
+                                    Button {
+                                        engine.input.customSolverOrder.swapAt(idx, idx + 1)
+                                        engine.recalculate()
+                                    } label: { Image(systemName: "arrow.down.circle") }
+                                    .buttonStyle(.borderless)
+                                }
+                            }
+                        }
+                    }
+
                     sliderRow("bAV-Einzahlung (max. 50.976 €)", value: $engine.input.bavAmount, range: 0...50_976, step: 500)
                     sliderRow("DRV V0210 Ausgleich (50% frei)", value: $engine.input.drvV0210Amount, range: 0...80_000, step: 500)
                     sliderRow("Rürup / Basisrente (frei: \(eur(engine.result.ruerupCapRemaining)))", value: $engine.input.ruerupAmount, range: 0...64_000, step: 500)
                     sliderRow("PV-Investition (50% IAB)", value: $engine.input.pvIabPurchase, range: 0...400_000, step: 2_500)
                     Button("🎯 IAB Sweet-Spot anwenden (zvE → 0 €)") {
+                        engine.selectedSolver = .manual
                         engine.input.pvIabPurchase = min(400_000, engine.result.iabSweetSpotDeduction * 2)
                         engine.recalculate()
                     }
@@ -291,6 +375,25 @@ struct MainView: View {
                     Text("Reichweite: Standard \(engine.result.standardRunwayMonths, specifier: "%.1f") Mo · Sprinter \(engine.result.sprinterRunwayMonths, specifier: "%.1f") Mo")
                         .font(.caption.bold())
                 }
+
+                Section("D · Gehalts-Switch / Break-Even") {
+                    sliderRow("Neues Zielgehalt (Brutto/Jahr)", value: $engine.input.newJobGrossAnnual, range: 20_000...180_000, step: 2_500)
+                    sliderRow("Gehaltswachstum p.a. (\(String(format: "%.1f%%", engine.input.salaryGrowthPct)))", value: $engine.input.salaryGrowthPct, range: 0...6.0, step: 0.5, isCurrency: false)
+                    Chart(engine.result.crossoverPoints) { pt in
+                        AreaMark(x: .value("Jahr", pt.year), y: .value("Kumulierter Vorteil", pt.netDelta))
+                            .foregroundStyle(Color.blue.opacity(0.18))
+                        LineMark(x: .value("Jahr", pt.year), y: .value("Kumulierter Vorteil", pt.netDelta))
+                            .foregroundStyle(Color.blue)
+                        RuleMark(y: .value("Break-Even", 0))
+                            .foregroundStyle(Color.red.opacity(0.6))
+                    }
+                    .frame(height: 160)
+                    Text(engine.result.breakEvenYear > 0
+                         ? "Break-Even erreicht in Jahr \(engine.result.breakEvenYear) nach Austritt"
+                         : "Kein Break-Even innerhalb von 15 Jahren (Abfindung überwiegt)")
+                        .font(.caption.bold())
+                        .foregroundStyle(engine.result.breakEvenYear > 0 ? .orange : .green)
+                }
             }
             .navigationTitle("Abfindung 2027")
             .toolbar {
@@ -311,6 +414,7 @@ struct MainView: View {
                 }
             }
             .onChange(of: engine.input) { _, _ in engine.recalculate() }
+            .onChange(of: engine.selectedSolver) { _, _ in engine.recalculate() }
             .safeAreaInset(edge: .bottom) {
                 HStack {
                     VStack(alignment: .leading) {
