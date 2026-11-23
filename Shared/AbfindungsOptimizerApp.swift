@@ -97,10 +97,111 @@ final class TaxEngineBridge {
         case "Sprinter":
             input = SimulationInput(altesMonatsgehalt: 9_000, fristMonate: 6, bruttoAbfindung: 140_000, agFiktivGehalt: 108_000, neuesGehalt2027: 0, turboEnabled: true, turboFaktor: 1.5, bavAmount: 25_000)
         case "Privatier":
-            input = SimulationInput(altesMonatsgehalt: 10_500, fristMonate: 6, bruttoAbfindung: 240_000, agFiktivGehalt: 126_000, neuesGehalt2027: 0, isSplitting: true, partnerGehalt2027: 15_000, turboEnabled: true, bavAmount: 50_976, ruerupAmount: 30_000, pvIabPurchase: 120_000)
+            input = SimulationInput(altesMonatsgehalt: 10_500, fristMonate: 6, bruttoAbfindung: 240_000, agFiktivGehalt: 126_000, neuesGehalt2027: 0, isSplitting: true, partnerGehalt2027: 15_000, turboEnabled: true, bavAmount: 50_976, ruerupAmount: 30_000, pvIabPurchase: 0)
         default: break
         }
         recalculate()
+    }
+
+    @MainActor
+    func generatePdfURL() -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Abfindungs_Optimizer_2027_Report.pdf")
+        let reportView = ExecutivePdfReportView(input: input, result: result)
+        let renderer = ImageRenderer(content: reportView)
+        renderer.proposedSize = .init(width: 595, height: 842) // A4 points
+
+        renderer.render { size, context in
+            var box = CGRect(origin: .zero, size: size)
+            guard let pdf = CGContext(url as CFURL, mediaBox: &box, nil) else { return }
+            pdf.beginPDFPage(nil)
+            context(pdf)
+            pdf.endPDFPage()
+            pdf.closePDF()
+        }
+        return url
+    }
+}
+
+struct ExecutivePdfReportView: View {
+    let input: SimulationInput
+    let result: SimulationResult
+
+    private func eur(_ v: Double) -> String {
+        v.formatted(.currency(code: "EUR").precision(.fractionLength(0)))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Abfindungs-Optimizer 2027 · Pro v27.0")
+                        .font(.title2.bold())
+                    Text("Executive Simulation Summary (§ 34 Abs. 1 EStG Fünftelregelung)")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text(Date.now.formatted(date: .abbreviated, time: .omitted))
+                    .font(.caption.bold())
+            }
+            Divider()
+
+            HStack(spacing: 12) {
+                kpiBox(title: "Sofort-Netto 2027", value: eur(result.sofortNetto2027), color: .primary)
+                kpiBox(title: "FA-Erstattung Okt. 2028", value: "+" + eur(result.finanzamtRefundOct2028), color: .green)
+                kpiBox(title: "Optimal-Netto Gesamt", value: eur(result.optimalNettoTotal), color: .blue)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("1. Parameter & Rahmenbedingungen 2027").font(.headline)
+                row("Abfindung Brutto", eur(input.bruttoAbfindung))
+                row("Altes Monatsgehalt / Frist", "\(eur(input.altesMonatsgehalt)) / \(input.fristMonate) Monate")
+                row("Neues Gehalt 2027", eur(input.neuesGehalt2027))
+                row("Sprinter-Option", input.turboEnabled ? "Aktiv (\(String(format: "%.1fx", input.turboFaktor)), \(result.ruhenszeitMonths) Mo Ruhenszeit)" : "Inaktiv")
+                row("Veranlagung", input.isSplitting ? "Zusammenveranlagung (Splitting)" : "Einzelveranlagung")
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("2. Steuer-Optimierung (§ 3 Nr. 63 / § 187a SGB VI / § 10 / § 7g)").font(.headline)
+                row("bAV-Einzahlung (§ 3 Nr. 63 EStG)", eur(input.bavAmount))
+                row("DRV V0210 Ausgleich (50% steuerfrei)", eur(input.drvV0210Amount))
+                row("Rürup / Basisrente (§ 10 EStG)", eur(input.ruerupAmount))
+                row("PV-IAB Investition (50% Abzug)", eur(input.pvIabPurchase))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("3. Finanzielle Reichweite (Runway)").font(.headline)
+                row("Monatliche Lebenshaltungskosten", eur(input.monthlyExpenses))
+                row("Reichweite Standard (Frist absitzen)", String(format: "%.1f Monate", result.standardRunwayMonths))
+                row("Reichweite Sprinter (Sofort-Austritt)", String(format: "%.1f Monate", result.sprinterRunwayMonths))
+            }
+
+            Spacer()
+            Divider()
+            Text("Hinweis: Mathematisches Simulations- und Rechenprogramm auf Basis der Steuer- und Sozialversicherungs-Rechengrößen 2027. Ersetzt keine individuelle Steuer- oder Rechtsberatung (StBerG).")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+        .padding(32)
+        .frame(width: 595, height: 842)
+        .background(Color.white)
+    }
+
+    private func kpiBox(title: String, value: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.headline.bold()).foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.gray.opacity(0.08))
+        .cornerRadius(8)
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label).font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+            Text(value).font(.subheadline.bold())
+        }
     }
 }
 
@@ -192,6 +293,23 @@ struct MainView: View {
                 }
             }
             .navigationTitle("Abfindung 2027")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    HStack(spacing: 8) {
+                        Text("v27.0")
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.blue.opacity(0.12))
+                            .foregroundStyle(.blue)
+                            .clipShape(Capsule())
+
+                        ShareLink(item: engine.generatePdfURL()) {
+                            Label("PDF", systemImage: "doc.richtext")
+                        }
+                    }
+                }
+            }
             .onChange(of: engine.input) { _, _ in engine.recalculate() }
             .safeAreaInset(edge: .bottom) {
                 HStack {
