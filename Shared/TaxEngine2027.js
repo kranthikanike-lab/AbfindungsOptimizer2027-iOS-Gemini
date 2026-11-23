@@ -90,6 +90,40 @@ function findMaxPartnerGrossForSplitting(userRawBaseZve, taxableAbf, churchRate)
   return Math.round(low);
 }
 
+function solveAllocation(mode, customOrder, context) {
+  let bav = 0, drv = 0, ruerup = 0, pvPurchase = 0;
+  let remBaseZve = Math.max(0, context.unoptimizedBaseZve);
+  let remAbf = Math.max(0, context.effectiveAbf);
+  let remRuerupCap = Math.max(0, context.ruerupCap);
+
+  const order = mode === "liquidity"
+    ? ["iab"]
+    : mode === "retirement"
+      ? ["bav", "drv", "ruerup"]
+      : mode === "custom" && Array.isArray(customOrder)
+        ? customOrder
+        : ["bav", "drv", "ruerup", "iab"];
+
+  for (const lever of order) {
+    if (lever === "bav") {
+      bav = Math.min(STATUTORY_2027.bavMaxTotal, remAbf);
+      remAbf -= bav;
+    } else if (lever === "drv") {
+      drv = Math.min(60000, remAbf);
+      remAbf -= drv * 0.5;
+    } else if (lever === "ruerup") {
+      ruerup = Math.min(remRuerupCap, remBaseZve);
+      remBaseZve -= ruerup;
+      remRuerupCap -= ruerup;
+    } else if (lever === "iab") {
+      const neededDeduction = Math.min(STATUTORY_2027.iabMaxPurchase * 0.5, remBaseZve);
+      pvPurchase = Math.round((neededDeduction * 2) / 2500) * 2500;
+      remBaseZve -= pvPurchase * 0.5;
+    }
+  }
+  return { bav, drv, ruerup, pvPurchase };
+}
+
 function runSimulation(input) {
   const altesMonatsgehalt = Number(input.altesMonatsgehalt || 0);
   const fristMonate = Number(input.fristMonate || 0);
@@ -119,17 +153,39 @@ function runSimulation(input) {
   const chargeableGkvMonths = turboEnabled ? Math.max(0, ruhenszeitMonths - (isPflicht ? 1 : 0)) : 0;
   const voluntaryGkvTotal = chargeableGkvMonths * gkvMonthlyRate;
 
-  const bav = Math.min(Number(input.bavAmount || 0), STATUTORY_2027.bavMaxTotal);
-  const drvV0210 = Number(input.drvV0210Amount || 0);
-  const ruerup = Number(input.ruerupAmount || 0);
-  const pvIabDeduction = Math.min(Number(input.pvIabPurchase || 0), STATUTORY_2027.iabMaxPurchase) * 0.5;
-
   const salaryNoTurbo = altesMonatsgehalt * fristMonate + neuesGehalt2027;
   const salaryTurbo = neuesGehalt2027;
   const actualSalary = turboEnabled ? salaryTurbo : salaryNoTurbo;
 
   const rvTotal = Math.min(actualSalary, STATUTORY_2027.bbgRvYear) * 0.186;
   const ruerupCap = Math.max(0, (isSplitting ? STATUTORY_2027.ruerupMaxSingle * 2 : STATUTORY_2027.ruerupMaxSingle) - rvTotal);
+
+  const userSocial = calcEmployeeSocial2027(actualSalary, zbPct, isPkv);
+  const partnerSocial = calcEmployeeSocial2027(partnerGehalt, zbPct, false);
+  const partnerZve = isSplitting
+    ? Math.max(0, partnerGehalt - Math.min(partnerGehalt, STATUTORY_2027.anPauschbetrag) - partnerSocial)
+    : 0;
+
+  const unoptimizedBaseZve = actualSalary + partnerZve - Math.min(actualSalary, STATUTORY_2027.anPauschbetrag) - userSocial - voluntaryGkvTotal;
+
+  let bav = Math.min(Number(input.bavAmount || 0), STATUTORY_2027.bavMaxTotal);
+  let drvV0210 = Number(input.drvV0210Amount || 0);
+  let ruerup = Number(input.ruerupAmount || 0);
+  let pvPurchase = Math.min(Number(input.pvIabPurchase || 0), STATUTORY_2027.iabMaxPurchase);
+
+  if (input.solverMode && input.solverMode !== "manual") {
+    const solved = solveAllocation(input.solverMode, input.customSolverOrder, {
+      unoptimizedBaseZve,
+      effectiveAbf,
+      ruerupCap
+    });
+    bav = solved.bav;
+    drvV0210 = solved.drv;
+    ruerup = solved.ruerup;
+    pvPurchase = solved.pvPurchase;
+  }
+
+  const pvIabDeduction = pvPurchase * 0.5;
   const allowedRuerup = Math.min(ruerup, ruerupCap);
 
   const taxableAbf = Math.max(0, effectiveAbf - bav - drvV0210 * 0.5);
@@ -143,13 +199,7 @@ function runSimulation(input) {
     Math.max(0, calcSolz2027(upfrontTotEst, isSplitting) - calcSolz2027(upfrontBaseEst, isSplitting));
   const sofortNetto2027 = Math.max(0, cashBeforeTaxAbf - upfrontAbfTax);
 
-  const userSocial = calcEmployeeSocial2027(actualSalary, zbPct, isPkv);
-  const partnerSocial = calcEmployeeSocial2027(partnerGehalt, zbPct, false);
-  const partnerZve = isSplitting
-    ? Math.max(0, partnerGehalt - Math.min(partnerGehalt, STATUTORY_2027.anPauschbetrag) - partnerSocial)
-    : 0;
-
-  const rawBaseZve = actualSalary + partnerZve - Math.min(actualSalary, STATUTORY_2027.anPauschbetrag) - userSocial - voluntaryGkvTotal - allowedRuerup - pvIabDeduction;
+  const rawBaseZve = unoptimizedBaseZve - allowedRuerup - pvIabDeduction;
   const final2028 = calcFuenftel2027(rawBaseZve, taxableAbf, isSplitting, churchRate);
   const optimalNettoTotal = Math.max(0, cashBeforeTaxAbf - final2028.abfTax);
   const finanzamtRefundOct2028 = optimalNettoTotal - sofortNetto2027;
@@ -198,6 +248,28 @@ function runSimulation(input) {
     { id: "spr-3", strategy: "Sprinter", phaseName: "3. Privatier", startMonth: ruhenszeitMonths + sprAlg1Covered, durationMonths: Math.round((sprRemaining / stdPostBurn) * 10) / 10 }
   ];
 
+  // Section D: Salary-Switch Break-Even Trajectory (15-year cumulative net delta)
+  const newJobGrossAnnual = Number(input.newJobGrossAnnual || 65000);
+  const growthRate = Number(input.salaryGrowthPct || 2.0) / 100;
+  const oldJobGrossAnnual = altesMonatsgehalt * 12;
+  const crossoverPoints = [];
+  let cumulativeDelta = optimalNettoTotal;
+  let breakEvenYear = -1;
+
+  for (let yr = 0; yr <= 15; yr++) {
+    crossoverPoints.push({ year: yr, netDelta: Math.round(cumulativeDelta) });
+    if (yr > 0) {
+      const factor = Math.pow(1 + growthRate, yr);
+      const oldNetYear = oldJobGrossAnnual * factor * 0.58;
+      const newNetYear = newJobGrossAnnual * factor * 0.62;
+      const prevDelta = cumulativeDelta;
+      cumulativeDelta += (newNetYear - oldNetYear);
+      if (prevDelta >= 0 && cumulativeDelta < 0 && breakEvenYear === -1) {
+        breakEvenYear = yr;
+      }
+    }
+  }
+
   return {
     sofortNetto2027: Math.round(sofortNetto2027),
     finanzamtRefundOct2028: Math.round(finanzamtRefundOct2028),
@@ -209,6 +281,12 @@ function runSimulation(input) {
     waterfallSteps,
     standardRunwayMonths: Math.round(standardRunwayMonths * 10) / 10,
     sprinterRunwayMonths: Math.round(sprinterRunwayMonths * 10) / 10,
-    runwaySegments
+    runwaySegments,
+    solvedBav: Math.round(bav),
+    solvedDrv: Math.round(drvV0210),
+    solvedRuerup: Math.round(ruerup),
+    solvedPvPurchase: Math.round(pvPurchase),
+    crossoverPoints,
+    breakEvenYear
   };
 }
