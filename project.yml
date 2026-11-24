@@ -12,9 +12,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kranthikanike.abfindungsoptimizer2027
-        INFOPLIST_FILE: Shared/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: AbfindungsPilot
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
         CURRENT_PROJECT_VERSION: "1"
-        MARKETING_VERSION: "27.0.1"
+        MARKETING_VERSION: "27.0.2"
         TARGETED_DEVICE_FAMILY: "1,2"
-

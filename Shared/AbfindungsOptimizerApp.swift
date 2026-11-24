@@ -151,7 +151,7 @@ final class TaxEngineBridge {
 
     @MainActor
     func generatePdfURL() -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Abfindungs_Optimizer_2027_Report.pdf")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_Report.pdf")
         let reportView = ExecutivePdfReportView(input: input, result: result)
         let renderer = ImageRenderer(content: reportView)
         renderer.proposedSize = .init(width: 595, height: 842)
@@ -180,7 +180,7 @@ struct ExecutivePdfReportView: View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Abfindungs-Optimizer 2027 · Pro v27.0")
+                    Text("AbfindungsPilot 2027 · Pro v27.0")
                         .font(.title2.bold())
                     Text("Executive Simulation Summary (§ 34 Abs. 1 EStG Fünftelregelung)")
                         .font(.caption).foregroundStyle(.secondary)
@@ -395,7 +395,7 @@ struct MainView: View {
                         .foregroundStyle(engine.result.breakEvenYear > 0 ? .orange : .green)
                 }
             }
-            .navigationTitle("Abfindung 2027")
+            .navigationTitle("AbfindungsPilot 2027")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 8) {
