@@ -2,7 +2,7 @@ name: Verify Tax Engine 2027
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main,'feat/**']
   workflow_dispatch:
 
 jobs:
