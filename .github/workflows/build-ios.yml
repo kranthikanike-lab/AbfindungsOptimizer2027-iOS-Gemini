@@ -2,33 +2,114 @@ name: Verify Tax Engine 2027
 
 on:
   push:
-    branches: [ main,'feat/**']
+    branches: [ main, 'feat/**' ]
+  pull_request:
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  test-engine:
-    name: Test 2027 Tax & Solver Math
+  verify-engine:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Statutory Tax Engine Tests (Node.js)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Verify Swift & Statutory Info Sheet files exist
+        run: |
+          test -f Shared/AbfindungsOptimizerApp.swift
+          test -f Shared/StatutoryInfoSheet.swift
+          test -f Shared/TaxEngine2027.js
+          test -f project.yml
+
+      - name: Run 2027 Tax Engine & Auto-Solver Assertions
         run: |
           node -e '
-            const fs = require("fs");
-            const code = fs.readFileSync("Shared/TaxEngine2027.js", "utf8");
-            eval(code);
-            const res = runSimulation({
-              altesMonatsgehalt: 8333,
-              fristMonate: 5,
-              bruttoAbfindung: 120000,
-              agFiktivGehalt: 100000,
-              neuesGehalt2027: 25000,
-              turboEnabled: true,
-              turboFaktor: 1.5
-            });
-            console.log("Simulation Output:", JSON.stringify(res, null, 2));
-            if (res.optimalNettoTotal <= 0) throw new Error("Invalid output");
+          const fs = require("fs");
+          const assert = require("assert");
+          const vm = require("vm");
+
+          const code = fs.readFileSync("Shared/TaxEngine2027.js", "utf8");
+          const sandbox = { console };
+          vm.createContext(sandbox);
+          vm.runInContext(code, sandbox);
+
+          assert.strictEqual(typeof sandbox.runSimulation, "function", "runSimulation must be exported");
+
+          const baseInput = {
+            altesMonatsgehalt: 8333,
+            fristMonate: 5,
+            bruttoAbfindung: 120000,
+            agFiktivGehalt: 100000,
+            neuesGehalt2027: 25000,
+            kvZusatzbeitragPct: 2.5,
+            preExitGkv: "Pflichtversichert (§ 19 Abs. 2 SGB V)",
+            isSplitting: false,
+            partnerGehalt2027: 0,
+            churchRate: 0.0,
+            turboEnabled: false,
+            turboFaktor: 1.5,
+            alg1SatzPct: 60.0,
+            includeAlg1Loss: false,
+            solverMode: "manual",
+            customSolverOrder: ["bav", "drv", "ruerup", "iab"],
+            bavAmount: 0,
+            drvV0210Amount: 0,
+            ruerupAmount: 0,
+            pvIabPurchase: 0,
+            monthlyExpenses: 3500,
+            alg1ClaimMonths: 12,
+            postAlg1GkvMode: "Mindestbeitrag",
+            newJobGrossAnnual: 65000,
+            salaryGrowthPct: 2.0
+          };
+
+          // 1. Baseline Fünftelregelung & Finanzamt 2028 refund check
+          const resBase = sandbox.runSimulation(baseInput);
+          assert(resBase.sofortNetto2027 > 0, "Sofort-Netto 2027 must be positive");
+          assert(resBase.finanzamtRefundOct2028 > 0, "Fünftelregelung refund in Oct 2028 must be positive");
+          assert(Math.abs(resBase.optimalNettoTotal - (resBase.sofortNetto2027 + resBase.finanzamtRefundOct2028)) < 1, "Optimal-Netto must equal Sofort + Refund");
+          assert(resBase.ruerupCapRemaining > 0 && resBase.ruerupCapRemaining <= 32308, "Single Rürup cap must respect 32.308 € ceiling");
+          assert(resBase.standardRunwayMonths > 0, "Standard runway must be positive");
+
+          // 2. Sprinter mode & § 158 SGB III Ruhenszeit check
+          const resSprinter = sandbox.runSimulation({ ...baseInput, turboEnabled: true, turboFaktor: 1.5 });
+          assert(resSprinter.ruhenszeitMonths >= 1 && resSprinter.ruhenszeitMonths <= 5, "Ruhenszeit must be bounded by notice period");
+          assert(Array.isArray(resSprinter.waterfallSteps) && resSprinter.waterfallSteps.length >= 4, "Sprinter waterfall steps must populate");
+          assert(resSprinter.sprinterRunwayMonths > 0, "Sprinter runway must be positive");
+
+          // 3. Auto-Solver Mode: Optimal-Netto
+          const resOptimal = sandbox.runSimulation({ ...baseInput, solverMode: "optimal" });
+          assert(resOptimal.solvedBav > 0 || resOptimal.solvedRuerup > 0 || resOptimal.solvedPvPurchase > 0, "Optimal solver must allocate at least one tax lever");
+          assert(resOptimal.solvedBav <= 50976, "bAV must not exceed 50.976 € statutory cap");
+          assert(resOptimal.solvedPvPurchase <= 400000, "PV-IAB purchase must not exceed 400.000 € cap");
+
+          // 4. Auto-Solver Mode: Liquiditäts-Fokus (zero lock-up in bAV/Rürup/DRV)
+          const resLiquidity = sandbox.runSimulation({ ...baseInput, solverMode: "liquidity" });
+          assert.strictEqual(resLiquidity.solvedBav, 0, "Liquidity mode must keep bAV at 0");
+          assert.strictEqual(resLiquidity.solvedDrv, 0, "Liquidity mode must keep DRV at 0");
+          assert.strictEqual(resLiquidity.solvedRuerup, 0, "Liquidity mode must keep Rürup at 0");
+
+          // 5. Auto-Solver Mode: Altersvorsorge (retirement levers, no PV-IAB)
+          const resRetirement = sandbox.runSimulation({ ...baseInput, solverMode: "retirement" });
+          assert.strictEqual(resRetirement.solvedPvPurchase, 0, "Altersvorsorge mode must keep PV-IAB at 0");
+          assert(resRetirement.solvedBav > 0 || resRetirement.solvedRuerup > 0, "Altersvorsorge mode must utilize pension levers");
+
+          // 6. Auto-Solver Mode: Custom Priority Order
+          const resCustom = sandbox.runSimulation({
+            ...baseInput,
+            solverMode: "custom",
+            customSolverOrder: ["ruerup", "bav", "drv", "iab"]
+          });
+          assert(resCustom.solvedRuerup >= 0 && resCustom.solvedBav <= 50976, "Custom priority solver must respect statutory limits");
+
+          // 7. Section D: Gehalts-Switch / Break-Even Trajectory
+          assert(Array.isArray(resBase.crossoverPoints) && resBase.crossoverPoints.length >= 10, "Crossover trajectory must return multi-year points");
+          assert.strictEqual(typeof resBase.breakEvenYear, "number", "breakEvenYear must be numeric");
+
+          console.log("✅ All 2027 Tax Engine, Auto-Solver, Sprinter, and Break-Even assertions passed!");
           '
