@@ -260,6 +260,7 @@ struct AbfindungsOptimizerApp: App {
 
 struct MainView: View {
     @Bindable var engine: TaxEngineBridge
+    @State private var selectedInfoTopic: StatutoryTopic?
 
     private func eur(_ v: Double) -> String {
         v.formatted(.currency(code: "EUR").precision(.fractionLength(0)))
@@ -292,17 +293,35 @@ struct MainView: View {
                     sliderRow("Abfindung Brutto", value: $engine.input.bruttoAbfindung, range: 10_000...500_000, step: 2_500)
                     sliderRow("Altes Monatsgehalt", value: $engine.input.altesMonatsgehalt, range: 2_500...25_000, step: 250)
                     Stepper("Kündigungsfrist: \(engine.input.fristMonate) Monate", value: $engine.input.fristMonate, in: 1...12)
+                    sliderRow("AG-Fiktivgehalt", value: $engine.input.agFiktivGehalt, range: 20_000...250_000, step: 2_500, topic: .agFiktiv)
                     sliderRow("Neues Gehalt 2027", value: $engine.input.neuesGehalt2027, range: 0...150_000, step: 1_000)
-                    Picker("Vor-Austritt GKV", selection: $engine.input.preExitGkv) {
-                        ForEach(PreExitGkvStatus.allCases) { Text($0.rawValue).tag($0) }
+
+                    HStack(spacing: 4) {
+                        Picker("Vor-Austritt GKV", selection: $engine.input.preExitGkv) {
+                            ForEach(PreExitGkvStatus.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        InfoIconButton(topic: .preExitGkv, selectedTopic: $selectedInfoTopic)
                     }
-                    Toggle("Sprinter-Option (Vorzeitiger Austritt)", isOn: $engine.input.turboEnabled)
+
+                    HStack {
+                        Toggle("Sprinter-Option (Vorzeitiger Austritt)", isOn: $engine.input.turboEnabled)
+                        InfoIconButton(topic: .sprinterLegal, selectedTopic: $selectedInfoTopic)
+                    }
+
                     if engine.input.turboEnabled {
                         sliderRow("Sprinter-Faktor (\(String(format: "%.1fx", engine.input.turboFaktor)))", value: $engine.input.turboFaktor, range: 0.5...2.5, step: 0.1, isCurrency: false)
-                        Text("ALG-1 Ruhenszeit (§ 158 SGB III): \(engine.result.ruhenszeitMonths) Monate")
-                            .font(.caption).foregroundStyle(.secondary)
+                        HStack(spacing: 4) {
+                            Text("ALG-1 Ruhenszeit (§ 158 SGB III): \(engine.result.ruhenszeitMonths) Monate")
+                                .font(.caption).foregroundStyle(.secondary)
+                            InfoIconButton(topic: .alg1Rules, selectedTopic: $selectedInfoTopic)
+                        }
                     }
-                    Toggle("Zusammenveranlagung (Splitting)", isOn: $engine.input.isSplitting)
+
+                    HStack {
+                        Toggle("Zusammenveranlagung (Splitting)", isOn: $engine.input.isSplitting)
+                        InfoIconButton(topic: .tarifSplitting, selectedTopic: $selectedInfoTopic)
+                    }
+
                     if engine.input.isSplitting {
                         sliderRow("Gehalt Ehepartner 2027", value: $engine.input.partnerGehalt2027, range: 0...180_000, step: 1_000)
                         Text("Splitting-Vorteil bis ca. \(eur(engine.result.partnerSplittingBreakEvenMax)) Partner-Brutto")
@@ -339,10 +358,10 @@ struct MainView: View {
                         }
                     }
 
-                    sliderRow("bAV-Einzahlung (max. 50.976 €)", value: $engine.input.bavAmount, range: 0...50_976, step: 500)
-                    sliderRow("DRV V0210 Ausgleich (50% frei)", value: $engine.input.drvV0210Amount, range: 0...80_000, step: 500)
-                    sliderRow("Rürup / Basisrente (frei: \(eur(engine.result.ruerupCapRemaining)))", value: $engine.input.ruerupAmount, range: 0...64_000, step: 500)
-                    sliderRow("PV-Investition (50% IAB)", value: $engine.input.pvIabPurchase, range: 0...400_000, step: 2_500)
+                    sliderRow("bAV-Einzahlung (max. 50.976 €)", value: $engine.input.bavAmount, range: 0...50_976, step: 500, topic: .bav63)
+                    sliderRow("DRV V0210 Ausgleich (50% frei)", value: $engine.input.drvV0210Amount, range: 0...80_000, step: 500, topic: .drvV0210)
+                    sliderRow("Rürup / Basisrente (frei: \(eur(engine.result.ruerupCapRemaining)))", value: $engine.input.ruerupAmount, range: 0...64_000, step: 500, topic: .ruerup10)
+                    sliderRow("PV-Investition (50% IAB)", value: $engine.input.pvIabPurchase, range: 0...400_000, step: 2_500, topic: .pvIab7g)
                     Button("🎯 IAB Sweet-Spot anwenden (zvE → 0 €)") {
                         engine.selectedSolver = .manual
                         engine.input.pvIabPurchase = min(400_000, engine.result.iabSweetSpotDeduction * 2)
@@ -361,7 +380,7 @@ struct MainView: View {
                     }
                 }
 
-                Section("C · Finanzielle Reichweite (Runway)") {
+                Section {
                     sliderRow("Monatliche Ausgaben", value: $engine.input.monthlyExpenses, range: 1_500...12_000, step: 250)
                     Chart(engine.result.runwaySegments) { seg in
                         BarMark(
@@ -374,6 +393,11 @@ struct MainView: View {
                     .frame(height: 120)
                     Text("Reichweite: Standard \(engine.result.standardRunwayMonths, specifier: "%.1f") Mo · Sprinter \(engine.result.sprinterRunwayMonths, specifier: "%.1f") Mo")
                         .font(.caption.bold())
+                } header: {
+                    HStack(spacing: 4) {
+                        Text("C · Finanzielle Reichweite (Runway)")
+                        InfoIconButton(topic: .liquidityTimeline, selectedTopic: $selectedInfoTopic)
+                    }
                 }
 
                 Section("D · Gehalts-Switch / Break-Even") {
@@ -397,9 +421,17 @@ struct MainView: View {
             }
             .navigationTitle("AbfindungsPilot 2027")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        selectedInfoTopic = .recht2027
+                    } label: {
+                        Label("Recht 2027", systemImage: "scale.3d")
+                            .font(.caption.weight(.semibold))
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     HStack(spacing: 8) {
-                        Text("v27.0")
+                        Text("v27.1")
                             .font(.caption2.bold())
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
@@ -412,6 +444,9 @@ struct MainView: View {
                         }
                     }
                 }
+            }
+            .sheet(item: $selectedInfoTopic) { topic in
+                StatutoryInfoSheetView(topic: topic)
             }
             .onChange(of: engine.input) { _, _ in engine.recalculate() }
             .onChange(of: engine.selectedSolver) { _, _ in engine.recalculate() }
@@ -440,10 +475,13 @@ struct MainView: View {
     }
 
     @ViewBuilder
-    private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, isCurrency: Bool = true) -> some View {
+    private func sliderRow(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, isCurrency: Bool = true, topic: StatutoryTopic? = nil) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            HStack(spacing: 4) {
                 Text(title).font(.subheadline)
+                if let topic {
+                    InfoIconButton(topic: topic, selectedTopic: $selectedInfoTopic)
+                }
                 Spacer()
                 Text(isCurrency ? eur(value.wrappedValue) : String(format: "%.1f", value.wrappedValue)).bold()
             }
