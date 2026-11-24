@@ -337,7 +337,7 @@ struct MainView: View {
                     if engine.selectedSolver == .custom {
                         ForEach(Array(engine.input.customSolverOrder.enumerated()), id: \.element) { idx, key in
                             HStack {
-                                Text("\(idx + 1). \(leverDisplayName(key).dropFirst(3))")
+                                Text("\(idx + 1). \(String(leverDisplayName(key).dropFirst(3)))")
                                     .font(.subheadline)
                                 Spacer()
                                 if idx > 0 {
