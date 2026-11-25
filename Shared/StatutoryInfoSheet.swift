@@ -4,6 +4,7 @@ enum StatutoryTopic: String, Identifiable {
     case recht2027
     case agFiktiv
     case preExitGkv
+    case postAlg1Gkv
     case tarifSplitting
     case sprinterLegal
     case alg1Rules
@@ -20,6 +21,7 @@ enum StatutoryTopic: String, Identifiable {
         case .recht2027:         return "Rechengrößen & Recht 2027"
         case .agFiktiv:          return "AG-Fiktivgehalt & Lohnsteuerabzug"
         case .preExitGkv:        return "GKV-Status vor Austritt (§ 19 SGB V)"
+        case .postAlg1Gkv:       return "Freiwillige GKV nach ALG 1"
         case .tarifSplitting:    return "Grund- vs. Splittingtarif"
         case .sprinterLegal:     return "Sprinterprämie (§ 34 EStG)"
         case .alg1Rules:         return "ALG 1: Ruhenszeit vs. Sperrzeit"
@@ -36,6 +38,7 @@ enum StatutoryTopic: String, Identifiable {
         case .recht2027:         return "Rechtsstand 2027"
         case .agFiktiv:          return "Wachstumschancengesetz"
         case .preExitGkv:        return "§ 19 Abs. 2 SGB V"
+        case .postAlg1Gkv:       return "§ 240 SGB V (Privatier)"
         case .tarifSplitting:    return "§ 32a / § 34 EStG"
         case .sprinterLegal:     return "§ 24 Nr. 1a & § 34 EStG"
         case .alg1Rules:         return "§§ 148, 158, 159 SGB III"
@@ -77,6 +80,8 @@ enum StatutoryTopic: String, Identifiable {
             return "Seit dem Wachstumschancengesetz wendet der Arbeitgeber beim Lohnsteuerabzug keine Fünftelregelung mehr an."
         case .preExitGkv:
             return "Ihr Versicherungsstatus vor dem Austritt bestimmt, ob während einer Ruhenszeit im 1. Monat kostenfreier Schutz greift."
+        case .postAlg1Gkv:
+            return "Nach Ablauf von ALG 1 wechseln Sie ohne neuen Job i. d. R. in die freiwillige GKV oder die kostenfreie Familienversicherung."
         case .tarifSplitting:
             return "Bei Zusammenveranlagung kann eine hohe Abfindung die Progression so anheben, dass Einzelveranlagung günstiger ist (Fünftel-Falle)."
         case .sprinterLegal:
@@ -117,6 +122,12 @@ enum StatutoryTopic: String, Identifiable {
                 "Pflichtversichert vor Austritt: Nach § 19 Abs. 2 SGB V besteht nach Ende der Beschäftigung für bis zu 1 Monat ein kostenfreier nachgehender Leistungsanspruch (0 € GKV/PV im 1. Ruhens-Monat).",
                 "Freiwillig versichert vor Austritt: Der nachgehende Leistungsanspruch greift nicht — der freiwillige GKV/PV-Höchstsatz (~1.320 €/Mo bei 2,5 % Zusatzbeitrag) fällt ab Tag 1 der Ruhenszeit an.",
                 "Freiwillige GKV/PV-Beiträge sind nach § 10 EStG voll als Sonderausgaben absetzbar."
+            ]
+        case .postAlg1Gkv:
+            return [
+                "Mindestbeitrag (~280 €/Mo): Gilt für freiwillig Versicherte ohne laufende steuerpflichtige Einkünfte (reiner Vermögensverzehr aus der Abfindung ist beitragsfrei).",
+                "Kapitalerträge & Mieten: Zinsen, Dividenden und Mieteinnahmen werden ab dem ersten Euro (ohne Sparer-Pauschbetrag) bis zur BBG verbeitragt — wählen Sie dafür 'Individuell'.",
+                "Familienversicherung (0 €/Mo): Möglich, wenn der Ehepartner gesetzlich versichert ist und das eigene Gesamteinkommen unter der monatlichen Einkommensgrenze bleibt."
             ]
         case .tarifSplitting:
             return [
@@ -160,7 +171,7 @@ enum StatutoryTopic: String, Identifiable {
             ]
         case .liquidityTimeline:
             return [
-                "Konto-Cash 31.12.2027 zeigt Ihren tatsächlichen Bankkontostand am Jahresende nach Lohnsteuerabzug, Rürup/DRV-Abfluss und eventueller freiwilliger GKV.",
+                "Konto-Cash 31.12.2027 zeigt Ihren tatsächlichen Bankkontostand am Jahresende nach Lohnsteuerabzug, Netto-Gehalt 2027, Rürup/PV-Abfluss und eventueller freiwilliger GKV.",
                 "Im Oktober 2028 fließt die Steuererstattung vom Finanzamt aus der Fünftelregelung und den Vorsorge-Hebeln auf Ihr Konto."
             ]
         }
