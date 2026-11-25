@@ -43,36 +43,70 @@ jobs:
           printf '%s' "$ASC_KEY_P8" > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
           
+      
       - name: Validate Apple API credentials
+        env:
+          NODE_NO_WARNINGS: 1
         run: |
+          set -euo pipefail
+
+          export ASC_KEY_ID="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
+          export ASC_ISSUER_ID="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+
           KEY_FILE="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          test -s "$KEY_FILE"
 
-          echo "Checking private key..."
-          test -s "$KEY_FILE" || {
-            echo "::error::Private key missing or empty"
-            exit 1
+          node <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+
+          const key = fs.readFileSync(
+            `${process.env.HOME}/private_keys/AuthKey_${process.env.ASC_KEY_ID}.p8`
+          );
+
+          const now = Math.floor(Date.now() / 1000);
+
+          const header = {
+            alg: 'ES256',
+            kid: process.env.ASC_KEY_ID,
+            typ: 'JWT'
+          };
+
+          const payload = {
+            iss: process.env.ASC_ISSUER_ID,
+            iat: now,
+            exp: now + 300,
+            aud: 'appstoreconnect-v1'
+          };
+
+          const b64 = obj =>
+            Buffer.from(JSON.stringify(obj)).toString('base64url');
+
+          const input = `${b64(header)}.${b64(payload)}`;
+
+          const signature = crypto.sign(
+            'sha256',
+            Buffer.from(input),
+            {
+              key,
+              dsaEncoding: 'ieee-p1363'
+            }
+          );
+
+          if (signature.length !== 64) {
+            throw new Error('Invalid ES256 signature length');
           }
 
-          openssl pkey -in "$KEY_FILE" -noout || {
-            echo "::error::Invalid private key"
-            exit 1
-          }
+          const token = `${input}.${signature.toString('base64url')}`;
 
-          echo "Checking Apple API authentication..."
+          fs.writeFileSync('/tmp/apple-jwt', token);
+          console.log('JWT generated with valid ES256 signature format');
+          NODE
 
-          NOW=$(date +%s)
-          EXP=$((NOW + 300))
-
-          HEADER=$(printf '{"alg":"ES256","kid":"%s","typ":"JWT"}' "$ASC_KEY_ID" | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-
-          PAYLOAD=$(printf '{"iss":"%s","iat":%s,"exp":%s,"aud":"appstoreconnect-v1"}' "$ASC_ISSUER_ID" "$NOW" "$EXP" | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-
-          SIGNATURE=$(printf '%s' "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$KEY_FILE" -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-
-          TOKEN="$HEADER.$PAYLOAD.$SIGNATURE"
-
-          HTTP=$(curl -sS -o /tmp/apple-response.json -w "%{http_code}" \
-            -H "Authorization: Bearer $TOKEN" \
+          HTTP=$(curl -sS \
+            -o /tmp/apple-response.json \
+            -w "%{http_code}" \
+            -H "Authorization: Bearer $(cat /tmp/apple-jwt)" \
             "https://api.appstoreconnect.apple.com/v1/apps?limit=1")
 
           echo "Apple API HTTP status: $HTTP"
@@ -82,7 +116,8 @@ jobs:
             exit 1
           fi
 
-          echo "Apple API authentication successful"
+          echo "SUCCESS: Apple API authentication verified"
+
 
 
       - name: Archive (unsigned; signing happens during export)
