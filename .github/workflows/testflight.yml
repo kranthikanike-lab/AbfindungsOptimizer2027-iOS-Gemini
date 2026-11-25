@@ -6,7 +6,7 @@ on:
 
 jobs:
   testflight:
-    runs-on: macos-15
+    runs-on: macos-14-large
     timeout-minutes: 45
     env:
       BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
