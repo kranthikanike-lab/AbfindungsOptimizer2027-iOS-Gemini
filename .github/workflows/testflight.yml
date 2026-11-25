@@ -60,38 +60,39 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
+     
       - name: Prepare Apple API key
         shell: bash
         run: |
           set -euo pipefail
 
-          export ASC_KEY_ID="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
-          export ASC_ISSUER_ID="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+          ASC_KEY_ID="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
+          ASC_ISSUER_ID="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
+          BUNDLE_ID="$(printf '%s' "$BUNDLE_ID" | tr -d '[:space:]')"
+          TEAM_ID="$(printf '%s' "$TEAM_ID" | tr -d '[:space:]')"
 
-          export BUNDLE_ID="$(printf '%s' "$BUNDLE_ID" | tr -d '[:space:]')"
-          export TEAM_ID="$(printf '%s' "$TEAM_ID" | tr -d '[:space:]')"
+          # Persist normalized values across GitHub Actions steps
+          {
+            echo "ASC_KEY_ID=$ASC_KEY_ID"
+            echo "ASC_ISSUER_ID=$ASC_ISSUER_ID"
+            echo "BUNDLE_ID=$BUNDLE_ID"
+            echo "TEAM_ID=$TEAM_ID"
+          } >> "$GITHUB_ENV"
 
           mkdir -p "$HOME/private_keys"
 
           KEY_FILE="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
           printf '%s' "$ASC_KEY_P8" > "$KEY_FILE"
-
           chmod 600 "$KEY_FILE"
 
           openssl pkey -in "$KEY_FILE" -noout
 
-          echo "API private key structure validated."
-
-          echo "Runner UTC time:"
-          date -u
-
+          echo "Credentials prepared."
           echo "Key ID length: ${#ASC_KEY_ID}"
           echo "Issuer ID length: ${#ASC_ISSUER_ID}"
-
-          echo "Public key fingerprint:"
-          openssl pkey -in "$KEY_FILE" -pubout -outform DER |
-            openssl sha256
+          echo "Bundle ID: $BUNDLE_ID"
+          echo "Team ID length: ${#TEAM_ID}"
 
       - name: Validate Apple API authentication
         shell: bash
