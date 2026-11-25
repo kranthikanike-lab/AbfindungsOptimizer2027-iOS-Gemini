@@ -77,20 +77,27 @@ enum ChurchTaxOption: Double, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum ChartStrategyFilter: String, CaseIterable, Identifiable {
+    case both = "Beide"
+    case standard = "Standard"
+    case sprinter = "Sprinter"
+    var id: String { rawValue }
+}
+
 struct SimulationInput: Codable, Equatable {
     // Section A: Basis & Severance
     var altesMonatsgehalt: Double = 7_500
     var fristMonate: Int = 5
     var bruttoAbfindung: Double = 150_000
     var agFiktivGehalt: Double = 90_000
-    var payoutMonth2027: Int = 4 // 1..12
-    var neuesGehalt2027: Double = 0 // Additional salary from NEW job in 2027
+    var payoutMonth2027: Int = 4
+    var neuesGehalt2027: Double = 0
 
     // Family, Tax & GKV
     var isSplitting: Bool = false
     var partnerGehalt2027: Double = 0
-    var kinderZahl: Double = 0.0 // 0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0
-    var churchRate: Double = 0.0 // 0.0, 0.08, 0.09
+    var kinderZahl: Double = 0.0
+    var churchRate: Double = 0.0
     var kvZusatzbeitragPct: Double = 2.5
     var preExitGkv: PreExitGkvStatus = .pflicht
 
@@ -127,6 +134,8 @@ struct SimulationInput: Codable, Equatable {
 struct WaterfallStep: Identifiable {
     let id = UUID()
     let label: String
+    let start: Double
+    let end: Double
     let delta: Double
     let isTotal: Bool
 }
@@ -137,20 +146,21 @@ struct RunwayPhaseBar: Identifiable {
     let phase: String
     let startMonth: Double
     let endMonth: Double
-    let colorName: String
+    let isLast: Bool
+    let endDateLabel: String
+
+    var duration: Double { max(0, endMonth - startMonth) }
 }
 
 struct DualSeriesPoint: Identifiable {
     let id = UUID()
     let x: Double
+    let label: String
     let standardVal: Double
     let sprinterVal: Double
 
-    var sharedMin: Double {
-        if standardVal >= 0 && sprinterVal >= 0 {
-            return min(standardVal, sprinterVal)
-        }
-        return 0
+    var sharedPositive: Double {
+        (standardVal > 0 && sprinterVal > 0) ? min(standardVal, sprinterVal) : 0
     }
     var sprinterAheadLow: Double { min(standardVal, sprinterVal) }
     var sprinterAheadHigh: Double { sprinterVal > standardVal ? sprinterVal : min(standardVal, sprinterVal) }
@@ -159,20 +169,26 @@ struct DualSeriesPoint: Identifiable {
 }
 
 struct SimulationResult {
-    // 2027 Gross Breakdown
+    // 2027 Gross & Net Salary Breakdown
     var oldJobMonths2027: Int = 0
     var oldJobGross2027: Double = 0
     var totalGross2027: Double = 0
+    var netSalary2027: Double = 0
 
-    // Core KPIs
+    // Core KPIs & Table 1 / 2 / 3 Fields
     var effectiveAbfindung: Double = 0
     var sprinterBonusGross: Double = 0
+    var barBruttoVorSteuer: Double = 0
     var sofortNetto2027: Double = 0
     var upfrontPayrollTax: Double = 0
+    var upfrontTaxRatePct: Double = 0
     var finanzamtRefundOct2028: Double = 0
     var optimalNettoTotal: Double = 0
-    var endLiquidity2028: Double = 0
     var totalTaxFinal: Double = 0
+    var finalTaxRatePct: Double = 0
+    var ruhensGkvTotal: Double = 0
+    var kontoCashEnd2027: Double = 0
+    var endLiquidity2028: Double = 0
     var kinderBenefitNet: Double = 0
     var kinderFreibetragWon: Bool = false
 
@@ -196,6 +212,7 @@ struct SimulationResult {
 
     var ruerupMaxCap: Double = 32_308
     var ruerupCapRemaining: Double = 32_308
+    var ruerupSweetSpot: Double = 0
     var iabSweetSpotPurchase: Double = 0
     var partnerSplittingBreakEvenMax: Double = 0
 
@@ -275,6 +292,10 @@ final class TaxEngineHost: ObservableObject {
 
     func applyPreset(_ preset: String) {
         triggerLightHaptic()
+        if preset == "reset" {
+            input = SimulationInput()
+            return
+        }
         var next = input
         switch preset {
         case "standard":
@@ -327,13 +348,34 @@ final class TaxEngineHost: ObservableObject {
         input = next
     }
 
+    // Prevents Auto-Solver snap-back when user tweaks a single slider
+    func updateManualLever(_ mutate: (inout SimulationInput) -> Void) {
+        var next = input
+        if next.solverMode != .manual {
+            next.bavAmount = result.solvedBav
+            next.drvV0210Amount = result.solvedDrv
+            next.ruerupAmount = result.solvedRuerup
+            next.pvIabPurchase = result.solvedPvPurchase
+            next.solverMode = .manual
+        }
+        mutate(&next)
+        input = next
+    }
+
+    func applyRuerupSweetSpot() {
+        triggerLightHaptic()
+        updateManualLever { next in
+            next.taxOptimizationEnabled = true
+            next.ruerupAmount = min(result.ruerupMaxCap, (result.ruerupSweetSpot / 500.0).rounded() * 500.0)
+        }
+    }
+
     func applyIabSweetSpot() {
         triggerLightHaptic()
-        var next = input
-        next.taxOptimizationEnabled = true
-        next.solverMode = .manual
-        next.pvIabPurchase = min(pvIabMaxPurchase, (result.iabSweetSpotPurchase / 1_000).rounded() * 1_000)
-        input = next
+        updateManualLever { next in
+            next.taxOptimizationEnabled = true
+            next.pvIabPurchase = min(pvIabMaxPurchase, (result.iabSweetSpotPurchase / 1_000.0).rounded() * 1_000.0)
+        }
     }
 
     // MARK: Core § 32a / § 34 / § 31 EStG Math
@@ -445,16 +487,22 @@ final class TaxEngineHost: ObservableObject {
         return 0.013
     }
 
-    private func monthlyNetSalary(annualGross: Double, isSplitting: Bool, churchRate: Double, kinderZahl: Double) -> Double {
+    private func employeeSocialAndZve(gross: Double, kinderZahl: Double) -> (socialTotal: Double, deductibleSocial: Double, zve: Double) {
+        if gross <= 0 { return (0, 0, 0) }
+        let rv = min(gross, bbgRvYear) * 0.093
+        let alv = min(gross, bbgRvYear) * 0.013
+        let kv = min(gross, bbgKvYear) * (0.073 + input.kvZusatzbeitragPct / 200.0)
+        let pv = min(gross, bbgKvYear) * pvEmployeeRate(kinderZahl: kinderZahl)
+        let deductible = rv + kv + pv
+        let zve = max(0, gross - min(gross, anPauschbetrag) - deductible)
+        return (rv + alv + kv + pv, deductible, zve)
+    }
+
+    private func annualNetSalary(annualGross: Double, isSplitting: Bool, churchRate: Double, kinderZahl: Double) -> Double {
         if annualGross <= 0 { return 0 }
-        let rv = min(annualGross, bbgRvYear) * 0.093
-        let alv = min(annualGross, bbgRvYear) * 0.013
-        let kv = min(annualGross, bbgKvYear) * (0.073 + input.kvZusatzbeitragPct / 200.0)
-        let pv = min(annualGross, bbgKvYear) * pvEmployeeRate(kinderZahl: kinderZahl)
-        let social = rv + alv + kv + pv
-        let zve = max(0, annualGross - min(annualGross, anPauschbetrag) - (rv + kv + pv))
-        let tax = calcTotalTaxWithKinder(rawBaseZve: zve, abfindung: 0, isSplitting: isSplitting, churchRate: churchRate, kinderZahl: kinderZahl).totalTax
-        return max(0, (annualGross - social - tax) / 12.0)
+        let s = employeeSocialAndZve(gross: annualGross, kinderZahl: kinderZahl)
+        let tax = calcTotalTaxWithKinder(rawBaseZve: s.zve, abfindung: 0, isSplitting: isSplitting, churchRate: churchRate, kinderZahl: kinderZahl).totalTax
+        return max(0, annualGross - s.socialTotal - tax)
     }
 
     private func computeOldJobMonths2027(for inp: SimulationInput, sprinter: Bool) -> Int {
@@ -479,8 +527,7 @@ final class TaxEngineHost: ObservableObject {
 
     private func monthlyAlg1Net() -> Double {
         let cappedMonthly = min(input.altesMonatsgehalt, bbgRvYear / 12.0)
-        let netFactor = 0.64
-        return cappedMonthly * netFactor * (input.alg1SatzPct / 100.0)
+        return cappedMonthly * 0.64 * (input.alg1SatzPct / 100.0)
     }
 
     // MARK: Master Recalculation
@@ -488,13 +535,19 @@ final class TaxEngineHost: ObservableObject {
     func recalculate() {
         var r = SimulationResult()
 
-        // 1. 2027 Gross Income Split (Auto Alt-AG + Optional New Job)
+        // 1. 2027 Gross & Net Salary Split (Auto Alt-AG + Optional New Job)
         let oldMonths = computeOldJobMonths2027(for: input, sprinter: input.turboEnabled)
         let oldGross = Double(oldMonths) * input.altesMonatsgehalt
         let totalGross = oldGross + input.neuesGehalt2027
         r.oldJobMonths2027 = oldMonths
         r.oldJobGross2027 = oldGross
         r.totalGross2027 = totalGross
+        r.netSalary2027 = annualNetSalary(
+            annualGross: totalGross,
+            isSplitting: input.isSplitting,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        )
 
         // 2. Effective Severance & Sprinter Bonus
         let sprinterBonus = input.turboEnabled
@@ -505,28 +558,24 @@ final class TaxEngineHost: ObservableObject {
         r.effectiveAbfindung = effectiveAbf
 
         // 3. Base Deductions & Ruhenszeit GKV
-        let rvBase = min(totalGross, bbgRvYear)
-        let kvBase = min(totalGross, bbgKvYear)
-        let socialDeductibles = rvBase * 0.093 + kvBase * (0.073 + input.kvZusatzbeitragPct / 200.0 + pvEmployeeRate(kinderZahl: input.kinderZahl))
-        let anPauschale = min(totalGross, anPauschbetrag)
-
+        let emp = employeeSocialAndZve(gross: totalGross, kinderZahl: input.kinderZahl)
         let ruhensMonths = input.turboEnabled ? input.fristMonate : 0
         r.ruhenszeitMonths = ruhensMonths
         let billableGkvMonths = (input.preExitGkv == .pflicht) ? max(0, ruhensMonths - 1) : ruhensMonths
         let ruhensGkvTotal = Double(billableGkvMonths) * voluntaryGkvMonthly()
+        r.ruhensGkvTotal = ruhensGkvTotal
 
         let partnerZve: Double = {
             guard input.isSplitting && input.partnerGehalt2027 > 0 else { return 0 }
-            let pRv = min(input.partnerGehalt2027, bbgRvYear) * 0.093
-            let pKv = min(input.partnerGehalt2027, bbgKvYear) * (0.073 + input.kvZusatzbeitragPct / 200.0 + pvEmployeeRate(kinderZahl: input.kinderZahl))
-            return max(0, input.partnerGehalt2027 - min(input.partnerGehalt2027, anPauschbetrag) - pRv - pKv)
+            return employeeSocialAndZve(gross: input.partnerGehalt2027, kinderZahl: input.kinderZahl).zve
         }()
 
-        let rawBaseBeforeLevers = totalGross + partnerZve - anPauschale - socialDeductibles - ruhensGkvTotal
+        let rawBaseBeforeLevers = emp.zve + partnerZve - ruhensGkvTotal
 
         // 4. Rürup Cap & Solver Gate
         let ruerupCap = computeRuerupCap(for: input)
         r.ruerupMaxCap = ruerupCap
+        r.ruerupSweetSpot = min(ruerupCap, max(0, rawBaseBeforeLevers))
 
         var effBav = 0.0
         var effDrv = 0.0
@@ -567,6 +616,8 @@ final class TaxEngineHost: ObservableObject {
         r.iabSweetSpotPurchase = min(pvIabMaxPurchase, max(0, (rawBaseBeforeLevers - effRuerup) * 2.0))
 
         // 5. Upfront 2027 Payroll Withholding
+        let barBrutto = max(0, effectiveAbf - effBav - effDrv)
+        r.barBruttoVorSteuer = barBrutto
         let taxableAbfForPayroll = max(0, effectiveAbf - effBav - effDrv * 0.5)
         let upfrontTax = calcUpfrontPayrollTax(
             agFiktiv: input.agFiktivGehalt,
@@ -576,7 +627,8 @@ final class TaxEngineHost: ObservableObject {
             kinderZahl: input.kinderZahl
         )
         r.upfrontPayrollTax = upfrontTax
-        r.sofortNetto2027 = max(0, effectiveAbf - effBav - effDrv - upfrontTax)
+        r.upfrontTaxRatePct = barBrutto > 0 ? (upfrontTax / barBrutto) * 100.0 : 0
+        r.sofortNetto2027 = max(0, barBrutto - upfrontTax)
 
         // 6. Final 2028 Finanzamt Assessment
         let taxableAbfFinal = max(0, effectiveAbf - effBav - effDrv * 0.5)
@@ -600,12 +652,16 @@ final class TaxEngineHost: ObservableObject {
 
         let abfTaxFinal = max(0, taxFinalObj.totalTax - taxBaseOnly)
         r.totalTaxFinal = abfTaxFinal
+        r.finalTaxRatePct = barBrutto > 0 ? (abfTaxFinal / barBrutto) * 100.0 : 0
         r.kinderBenefitNet = taxFinalObj.kinderNetGain
         r.kinderFreibetragWon = taxFinalObj.kfbWon
 
         r.finanzamtRefundOct2028 = upfrontTax - abfTaxFinal
         r.optimalNettoTotal = effectiveAbf - abfTaxFinal
-        r.endLiquidity2028 = r.sofortNetto2027 + r.finanzamtRefundOct2028 - effRuerup - ruhensGkvTotal
+
+        // Table 3 Hard Liquidity Reconciliation (Synced with KPI Card #4)
+        r.kontoCashEnd2027 = r.sofortNetto2027 + r.netSalary2027 - effRuerup - effPv - ruhensGkvTotal
+        r.endLiquidity2028 = r.kontoCashEnd2027 + r.finanzamtRefundOct2028
 
         // 7. Standalone Lever Attribution & bAV Max-Cap Preview
         let upfrontNoBav = calcUpfrontPayrollTax(
@@ -673,25 +729,8 @@ final class TaxEngineHost: ObservableObject {
             abfindung: taxableAbfFinal
         )
 
-        // 9. Sprinter Waterfall Bridge
-        let lostNetSalary = Double(input.fristMonate) * monthlyNetSalary(
-            annualGross: input.altesMonatsgehalt * 12.0,
-            isSplitting: input.isSplitting,
-            churchRate: input.churchRate,
-            kinderZahl: input.kinderZahl
-        )
-        let alg1Loss = input.includeAlg1Loss ? min(Double(input.fristMonate), 12.0 / 4.333) * monthlyAlg1Net() : 0
-        let sprinterTaxDelta = max(0, sprinterBonus * 0.36)
-        let sprinterNet = sprinterBonus - sprinterTaxDelta - lostNetSalary - ruhensGkvTotal - alg1Loss
-        r.sprinterNetGain = sprinterNet
-        r.waterfallSteps = [
-            WaterfallStep(label: "Sprinter-Prämie", delta: sprinterBonus, isTotal: false),
-            WaterfallStep(label: "Steuer-Effekt", delta: -sprinterTaxDelta, isTotal: false),
-            WaterfallStep(label: "Entg. Netto-Gehalt", delta: -lostNetSalary, isTotal: false),
-            WaterfallStep(label: "GKV Ruhenszeit", delta: -ruhensGkvTotal, isTotal: false),
-            WaterfallStep(label: "ALG-1 Kürzung", delta: -alg1Loss, isTotal: false),
-            WaterfallStep(label: "Sprinter-Bilanz", delta: sprinterNet, isTotal: true)
-        ]
+        // 9. Exact 7-Step Floating Sprinter Waterfall Bridge
+        computeSprinterWaterfall(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
 
         // 10. Section C: Reichweite
         computeReichweite(into: &r, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
@@ -702,43 +741,89 @@ final class TaxEngineHost: ObservableObject {
         self.result = r
     }
 
+    private func computeSprinterWaterfall(
+        into r: inout SimulationResult,
+        partnerZve: Double,
+        effBav: Double,
+        effDrv: Double,
+        effRuerup: Double,
+        effPv: Double
+    ) {
+        let bonusGross = Double(input.fristMonate) * input.altesMonatsgehalt * input.turboFaktor
+        let baseTaxableAbf = max(0, input.bruttoAbfindung - effBav - effDrv * 0.5)
+        let fullTaxableAbf = max(0, input.bruttoAbfindung + bonusGross - effBav - effDrv * 0.5)
+
+        // Standard (no Sprinter) vs. Sprinter base income
+        let stdGross = Double(computeOldJobMonths2027(for: input, sprinter: false)) * input.altesMonatsgehalt + input.neuesGehalt2027
+        let sprGross = Double(computeOldJobMonths2027(for: input, sprinter: true)) * input.altesMonatsgehalt + input.neuesGehalt2027
+
+        let stdEmp = employeeSocialAndZve(gross: stdGross, kinderZahl: input.kinderZahl)
+        let sprEmp = employeeSocialAndZve(gross: sprGross, kinderZahl: input.kinderZahl)
+
+        let billableGkvMonths = (input.preExitGkv == .pflicht) ? max(0, input.fristMonate - 1) : input.fristMonate
+        let gkvCost = Double(billableGkvMonths) * voluntaryGkvMonthly()
+
+        let stdZveLevers = stdEmp.zve + partnerZve - effRuerup - effPv * 0.5
+        let sprZveLevers = sprEmp.zve + partnerZve - gkvCost - effRuerup - effPv * 0.5
+
+        // Exact § 34 tax isolation
+        let taxStdBase = calcTotalTaxWithKinder(rawBaseZve: stdZveLevers, abfindung: baseTaxableAbf, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+        let taxSprBase = calcTotalTaxWithKinder(rawBaseZve: sprZveLevers, abfindung: baseTaxableAbf, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+        let taxSprFull = calcTotalTaxWithKinder(rawBaseZve: sprZveLevers, abfindung: fullTaxableAbf, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+
+        // 1. Isolated Netto Sprinter-Prämie
+        let extraTaxOnBonus = max(0, taxSprFull - taxSprBase)
+        let nettoPraemie = max(0, bonusGross - extraTaxOnBonus)
+
+        // 2. Foregone Net Salary & 3. Pure Fünftel-Steuervorteil
+        let netSalStd = annualNetSalary(annualGross: stdGross, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+        let netSalSpr = annualNetSalary(annualGross: sprGross, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+        let lostNetSalary = max(0, netSalStd - netSalSpr)
+
+        let wealthNoTurbo = (stdGross - stdEmp.socialTotal) + baseTaxableAbf - taxStdBase
+        let wealthSprBase = (sprGross - sprEmp.socialTotal) + baseTaxableAbf - taxSprBase
+        let fuenftelAdvantage = (wealthSprBase - wealthNoTurbo) + lostNetSalary
+
+        // 4. RV-Punkte Verlust (18.6% on capped monthly gross * skipped months)
+        let rvLoss = Double(input.fristMonate) * min(input.altesMonatsgehalt, bbgRvYear / 12.0) * 0.186
+
+        // 5. Optional ALG-1 Sperrzeit (max 12 weeks)
+        let alg1Loss = input.includeAlg1Loss ? min(Double(input.fristMonate), 12.0 / 4.333) * monthlyAlg1Net() : 0
+
+        // Build true floating waterfall coordinates (xStart -> xEnd)
+        var rawItems: [(String, Double)] = [
+            ("+ Netto-Prämie", nettoPraemie),
+            ("+ Fünftel-Hebel", fuenftelAdvantage),
+            ("− Netto-Gehalt", -lostNetSalary),
+            ("− GKV Ruhenszeit", -gkvCost),
+            ("− RV-Punkte", -rvLoss)
+        ]
+        if input.includeAlg1Loss && alg1Loss > 0 {
+            rawItems.append(("− ALG-1 Sperrzeit", -alg1Loss))
+        }
+
+        var cursor = 0.0
+        var steps: [WaterfallStep] = []
+        for (label, delta) in rawItems {
+            let next = cursor + delta
+            steps.append(WaterfallStep(label: label, start: min(cursor, next), end: max(cursor, next), delta: delta, isTotal: false))
+            cursor = next
+        }
+        r.sprinterNetGain = cursor
+        steps.append(WaterfallStep(label: "= Sprinter-Bilanz", start: min(0, cursor), end: max(0, cursor), delta: cursor, isTotal: true))
+        r.waterfallSteps = steps
+    }
+
     private func findMaxPartnerGrossForSplitting(ownBaseZve: Double, abfindung: Double) -> Double {
         var lo = 0.0
         var hi = 250_000.0
         for _ in 0..<22 {
             let mid = (lo + hi) / 2.0
-            let pRv = min(mid, bbgRvYear) * 0.093
-            let pKv = min(mid, bbgKvYear) * (0.073 + input.kvZusatzbeitragPct / 200.0 + pvEmployeeRate(kinderZahl: input.kinderZahl))
-            let pZve = max(0, mid - min(mid, anPauschbetrag) - pRv - pKv)
-
-            let joint = calcTotalTaxWithKinder(
-                rawBaseZve: ownBaseZve + pZve,
-                abfindung: abfindung,
-                isSplitting: true,
-                churchRate: input.churchRate,
-                kinderZahl: input.kinderZahl
-            ).totalTax
-
-            let sepOwn = calcTotalTaxWithKinder(
-                rawBaseZve: ownBaseZve,
-                abfindung: abfindung,
-                isSplitting: false,
-                churchRate: input.churchRate,
-                kinderZahl: input.kinderZahl
-            ).totalTax
-            let sepPartner = calcTotalTaxWithKinder(
-                rawBaseZve: pZve,
-                abfindung: 0,
-                isSplitting: false,
-                churchRate: input.churchRate,
-                kinderZahl: 0
-            ).totalTax
-
-            if joint <= (sepOwn + sepPartner) {
-                lo = mid
-            } else {
-                hi = mid
-            }
+            let pZve = employeeSocialAndZve(gross: mid, kinderZahl: input.kinderZahl).zve
+            let joint = calcTotalTaxWithKinder(rawBaseZve: ownBaseZve + pZve, abfindung: abfindung, isSplitting: true, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let sepOwn = calcTotalTaxWithKinder(rawBaseZve: ownBaseZve, abfindung: abfindung, isSplitting: false, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let sepPartner = calcTotalTaxWithKinder(rawBaseZve: pZve, abfindung: 0, isSplitting: false, churchRate: input.churchRate, kinderZahl: 0).totalTax
+            if joint <= (sepOwn + sepPartner) { lo = mid } else { hi = mid }
         }
         return (lo / 500.0).rounded() * 500.0
     }
@@ -760,12 +845,12 @@ final class TaxEngineHost: ObservableObject {
             case .individuell: return input.customPostGkvMonthly
             }
         }()
-        let netSalMonthly = monthlyNetSalary(
+        let netSalMonthly = annualNetSalary(
             annualGross: input.altesMonatsgehalt * 12.0,
             isSplitting: input.isSplitting,
             churchRate: input.churchRate,
             kinderZahl: input.kinderZahl
-        )
+        ) / 12.0
         let monthlyRate = input.realReturnPct / 100.0 / 12.0
         let startOffset = max(0, input.payoutMonth2027 - 1)
         let faOffset = 21 - startOffset
@@ -785,12 +870,11 @@ final class TaxEngineHost: ObservableObject {
 
             let salMonths27 = computeOldJobMonths2027(for: input, sprinter: isSprinter)
             let gross27 = Double(salMonths27) * input.altesMonatsgehalt
-            let rv27 = min(gross27, bbgRvYear) * 0.093
-            let kv27 = min(gross27, bbgKvYear) * (0.073 + input.kvZusatzbeitragPct / 200.0 + pvEmployeeRate(kinderZahl: input.kinderZahl))
+            let emp27 = employeeSocialAndZve(gross: gross27, kinderZahl: input.kinderZahl)
             let ruhens = isSprinter ? input.fristMonate : 0
             let billableGkv = (input.preExitGkv == .pflicht) ? max(0, ruhens - 1) : ruhens
             let ruhensGkv = Double(billableGkv) * voluntaryGkvMonthly()
-            let baseZve = gross27 - min(gross27, anPauschbetrag) - rv27 - kv27 - ruhensGkv
+            let baseZve = emp27.zve - ruhensGkv
 
             let baseTax = calcTotalTaxWithKinder(rawBaseZve: baseZve, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
             let finalTax = calcTotalTaxWithKinder(rawBaseZve: baseZve - effRuerup - effPv * 0.5, abfindung: max(0, abfGross - effBav - effDrv * 0.5), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
@@ -807,13 +891,9 @@ final class TaxEngineHost: ObservableObject {
             var depletedMonth: Double = 72
 
             for m in 1...72 {
-                if m == max(1, faOffset) {
-                    cash += faRefund
-                }
+                if m == max(1, faOffset) { cash += faRefund }
                 if m <= noticePhase {
-                    if input.includeSalarySurplus {
-                        cash += max(0, netSalMonthly - input.monthlyExpenses)
-                    }
+                    if input.includeSalarySurplus { cash += max(0, netSalMonthly - input.monthlyExpenses) }
                 } else if m <= noticePhase + ruhens {
                     let gkvThisMonth = (input.preExitGkv == .pflicht && m == noticePhase + 1) ? 0 : voluntaryGkvMonthly()
                     cash -= (input.monthlyExpenses + gkvThisMonth)
@@ -823,37 +903,43 @@ final class TaxEngineHost: ObservableObject {
                     cash -= (input.monthlyExpenses + postGkv)
                 }
 
-                if cash > 0 {
-                    cash *= (1.0 + monthlyRate)
-                }
-                if m < max(1, faOffset) && cash < 0 {
-                    bridgeSafe = false
-                }
-                if cash <= 0 && depletedMonth == 72 {
-                    depletedMonth = Double(m)
-                }
+                if cash > 0 { cash *= (1.0 + monthlyRate) }
+                if m < max(1, faOffset) && cash < 0 { bridgeSafe = false }
+                if cash <= 0 && depletedMonth == 72 { depletedMonth = Double(m) }
                 series.append(max(0, cash))
             }
 
-            var bars: [RunwayPhaseBar] = []
+            let endLabel = depletedMonth >= 72 ? "> 6 J." : formatMonthOffset(startOffset + Int(depletedMonth))
+            var rawSegments: [(String, Double, Double)] = []
             var cursor = 0.0
             if noticePhase > 0 {
                 let end = min(depletedMonth, cursor + Double(noticePhase))
-                bars.append(RunwayPhaseBar(strategy: label, phase: "Gehalt/Frist", startMonth: cursor, endMonth: end, colorName: "blue"))
+                rawSegments.append(("Gehalt/Frist", cursor, end))
                 cursor = end
             }
             if ruhens > 0 && cursor < depletedMonth {
                 let end = min(depletedMonth, cursor + Double(ruhens))
-                bars.append(RunwayPhaseBar(strategy: label, phase: "Ruhenszeit", startMonth: cursor, endMonth: end, colorName: "orange"))
+                rawSegments.append(("Ruhenszeit", cursor, end))
                 cursor = end
             }
             if alg1Dur > 0 && cursor < depletedMonth {
                 let end = min(depletedMonth, cursor + Double(alg1Dur))
-                bars.append(RunwayPhaseBar(strategy: label, phase: "ALG 1", startMonth: cursor, endMonth: end, colorName: "cyan"))
+                rawSegments.append(("ALG 1", cursor, end))
                 cursor = end
             }
             if cursor < depletedMonth {
-                bars.append(RunwayPhaseBar(strategy: label, phase: "Privatier", startMonth: cursor, endMonth: depletedMonth, colorName: "green"))
+                rawSegments.append(("Privatier", cursor, depletedMonth))
+            }
+
+            let bars: [RunwayPhaseBar] = rawSegments.enumerated().map { idx, seg in
+                RunwayPhaseBar(
+                    strategy: label,
+                    phase: seg.0,
+                    startMonth: seg.1,
+                    endMonth: seg.2,
+                    isLast: idx == rawSegments.count - 1,
+                    endDateLabel: endLabel
+                )
             }
 
             let alg1End = startOffset + noticePhase + ruhens + alg1Dur
@@ -876,7 +962,12 @@ final class TaxEngineHost: ObservableObject {
         let maxPlot = min(72, max(24, Int(max(std.months, spr.months)) + 4))
         var pts: [DualSeriesPoint] = []
         for m in 0...maxPlot {
-            pts.append(DualSeriesPoint(x: Double(m), standardVal: std.series[m], sprinterVal: spr.series[m]))
+            pts.append(DualSeriesPoint(
+                x: Double(m),
+                label: formatMonthOffset(startOffset + m),
+                standardVal: std.series[m],
+                sprinterVal: spr.series[m]
+            ))
         }
         r.runwayCurve = pts
     }
@@ -899,12 +990,11 @@ final class TaxEngineHost: ObservableObject {
             let sofort = max(0, abfGross - effBav - effDrv - taxPay)
             let salMonths27 = computeOldJobMonths2027(for: input, sprinter: isSprinter)
             let gross27 = Double(salMonths27) * input.altesMonatsgehalt
-            let rv27 = min(gross27, bbgRvYear) * 0.093
-            let kv27 = min(gross27, bbgKvYear) * (0.073 + input.kvZusatzbeitragPct / 200.0 + pvEmployeeRate(kinderZahl: input.kinderZahl))
+            let emp27 = employeeSocialAndZve(gross: gross27, kinderZahl: input.kinderZahl)
             let ruhens = isSprinter ? input.fristMonate : 0
             let billableGkv = (input.preExitGkv == .pflicht) ? max(0, ruhens - 1) : ruhens
             let ruhensGkv = Double(billableGkv) * voluntaryGkvMonthly()
-            let baseZve = gross27 - min(gross27, anPauschbetrag) - rv27 - kv27 - ruhensGkv
+            let baseZve = emp27.zve - ruhensGkv
             let baseTax = calcTotalTaxWithKinder(rawBaseZve: baseZve, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
             let finalTax = calcTotalTaxWithKinder(rawBaseZve: baseZve - effRuerup - effPv * 0.5, abfindung: max(0, abfGross - effBav - effDrv * 0.5), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
             let faRefund = max(0, taxPay - max(0, finalTax - baseTax))
@@ -915,8 +1005,8 @@ final class TaxEngineHost: ObservableObject {
 
             for yr in 1...15 {
                 if yr == 2 { delta += faRefund }
-                let oldNetYr = monthlyNetSalary(annualGross: oldAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl) * 12.0
-                let newNetYr = monthlyNetSalary(annualGross: newAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl) * 12.0
+                let oldNetYr = annualNetSalary(annualGross: oldAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+                let newNetYr = annualNetSalary(annualGross: newAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
 
                 var yearDiff = newNetYr - oldNetYr
                 if yr == 1 && input.switchStartDelayMonths > 0 {
@@ -947,7 +1037,12 @@ final class TaxEngineHost: ObservableObject {
 
         var pts: [DualSeriesPoint] = []
         for y in 0...15 {
-            pts.append(DualSeriesPoint(x: Double(y), standardVal: std.curve[y], sprinterVal: spr.curve[y]))
+            pts.append(DualSeriesPoint(
+                x: Double(y),
+                label: "Jahr \(y) (\(2027 + y))",
+                standardVal: std.curve[y],
+                sprinterVal: spr.curve[y]
+            ))
         }
         r.switchCurve = pts
     }
@@ -1081,30 +1176,31 @@ struct MainTabContainerView: View {
                 ]
 
                 "AbfindungsPilot 2027 – Executive Summary (v27.1)".draw(at: CGPoint(x: 40, y: 36), withAttributes: titleAttrs)
-                "1. Kernergebnisse & 2027 Einkommen".draw(at: CGPoint(x: 40, y: 70), withAttributes: subAttrs)
+                "1. Kernergebnisse & Liquidität 2027 → 2028".draw(at: CGPoint(x: 40, y: 70), withAttributes: subAttrs)
 
                 let block1 = """
                 Basis-Abfindung Brutto: \(eur(inp.bruttoAbfindung))  |  Effektiv (inkl. Sprinter): \(eur(res.effectiveAbfindung))
                 2027 Brutto gesamt: \(eur(res.totalGross2027)) (\(res.oldJobMonths2027) Mon. Alt-AG \(eur(res.oldJobGross2027)) + Neu-Job \(eur(inp.neuesGehalt2027)))
-                Tarif: \(inp.isSplitting ? "Splittingtarif" : "Grundtarif")  |  Kinderfreibeträge: \(String(format: "%.1f", inp.kinderZahl))  |  Kirchensteuer: \(pct(inp.churchRate * 100))
+                Tarif: \(inp.isSplitting ? "Splittingtarif" : "Grundtarif")  |  Kinder: \(String(format: "%.1f", inp.kinderZahl))  |  Kirchensteuer: \(pct(inp.churchRate * 100))
 
-                • Sofort-Netto 2027 (nach AG-Einbehalt): \(eur(res.sofortNetto2027))
+                • Sofort-Netto 2027 (nach AG-Einbehalt \(pct(res.upfrontTaxRatePct))): \(eur(res.sofortNetto2027))
                 • Finanzamt-Erstattung Okt. 2028 (§ 34 EStG): \(eur(res.finanzamtRefundOct2028, showPlus: true))
-                • Optimal-Netto Gesamt: \(eur(res.optimalNettoTotal))
-                • End-Liquidität Ende 2028: \(eur(res.endLiquidity2028))
+                • Optimal-Netto Gesamt (Steuersatz \(pct(res.finalTaxRatePct))): \(eur(res.optimalNettoTotal))
+                • Konto-Cash 31.12.2027 (inkl. Netto-Gehalt 2027): \(eur(res.kontoCashEnd2027))
+                • Endgültige Bar-Liquidität Ende 2028: \(eur(res.endLiquidity2028))
                 """
-                block1.draw(in: CGRect(x: 40, y: 92, width: 515, height: 145), withAttributes: bodyAttrs)
+                block1.draw(in: CGRect(x: 40, y: 92, width: 515, height: 155), withAttributes: bodyAttrs)
 
-                "2. Steuer-Optimierung (§§ 3 Nr. 63, 10, 7g EStG & V0210)".draw(at: CGPoint(x: 40, y: 245), withAttributes: subAttrs)
+                "2. Steuer-Optimierung (§§ 3 Nr. 63, 10, 7g EStG & V0210)".draw(at: CGPoint(x: 40, y: 255), withAttributes: subAttrs)
                 let block2 = """
                 • bAV-Umwandlung: \(eur(res.solvedBav))  →  Sofort-Ersparnis 2027: \(eur(res.bavSavings, showPlus: true)) (\(pct(res.bavSavingsPct)))
                 • DRV V0210 (AG-Direkt): \(eur(res.solvedDrv))  →  Steuer-Ersparnis: \(eur(res.drvSavings, showPlus: true)) (\(pct(res.drvSavingsPct)))
                 • Rürup / Basisrente: \(eur(res.solvedRuerup))  →  Steuer-Ersparnis: \(eur(res.ruerupSavings, showPlus: true)) (\(pct(res.ruerupSavingsPct)))
                 • PV-IAB (50 % Abzug): \(eur(res.solvedPvPurchase))  →  Steuer-Ersparnis: \(eur(res.iabSavings, showPlus: true)) (\(pct(res.iabSavingsPct)))
                 """
-                block2.draw(in: CGRect(x: 40, y: 267, width: 515, height: 95), withAttributes: bodyAttrs)
+                block2.draw(in: CGRect(x: 40, y: 277, width: 515, height: 95), withAttributes: bodyAttrs)
 
-                "3. Reichweite & Gehalts-Switch Break-Even".draw(at: CGPoint(x: 40, y: 375), withAttributes: subAttrs)
+                "3. Reichweite & Gehalts-Switch Break-Even".draw(at: CGPoint(x: 40, y: 385), withAttributes: subAttrs)
                 let stdBe = res.breakEvenYearStandard.map { String(format: "%.1f J.", $0) } ?? "> 15 J."
                 let sprBe = res.breakEvenYearSprinter.map { String(format: "%.1f J.", $0) } ?? "> 15 J."
                 let block3 = """
@@ -1112,7 +1208,7 @@ struct MainTabContainerView: View {
                 • Reichweite Sprinter (Sofort): \(String(format: "%.0f", res.sprinterRunwayMonths)) Mon. (bis \(res.sprinterDepletionDate))
                 • Gehalts-Switch (\(eur(inp.switchNewAnnualGross))/J.): Standard \(stdBe)  |  Sprinter \(sprBe)
                 """
-                block3.draw(in: CGRect(x: 40, y: 397, width: 515, height: 75), withAttributes: bodyAttrs)
+                block3.draw(in: CGRect(x: 40, y: 407, width: 515, height: 75), withAttributes: bodyAttrs)
 
                 let disclaimer = "Hinweis (§ 2 StBerG): Unverbindliche mathematische Modellrechnung auf Basis der gesetzlichen Rechengrößen 2027. Keine Steuer- oder Rechtsberatung."
                 disclaimer.draw(in: CGRect(x: 40, y: 780, width: 515, height: 40), withAttributes: footAttrs)
@@ -1218,10 +1314,23 @@ struct InputsTabView: View {
     var body: some View {
         Form {
             Section {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     presetBtn("Standard", icon: "doc.text", key: "standard", tint: .blue)
                     presetBtn("Sprinter", icon: "bolt.fill", key: "sprinter", tint: .orange)
                     presetBtn("Privatier", icon: "sun.horizon.fill", key: "privatier", tint: .green)
+                    Button {
+                        engine.applyPreset("reset")
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.caption.weight(.bold))
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 10)
+                            .background(Color.secondary.opacity(0.14))
+                            .foregroundStyle(.secondary)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Zurücksetzen")
                 }
                 .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
             } header: {
@@ -1370,6 +1479,15 @@ struct InputsTabView: View {
                     .labelsHidden()
                     .pickerStyle(.menu)
                 }
+
+                CompactSliderRow(
+                    title: "KV-Zusatzbeitrag",
+                    selectedInfoTopic: $selectedInfoTopic,
+                    value: $engine.input.kvZusatzbeitragPct,
+                    range: 1.0...4.5,
+                    step: 0.1,
+                    valueFormatter: { pct($0) }
+                )
             } header: {
                 Text("Familie, Kinder & Steuern").font(.caption.weight(.semibold))
             }
@@ -1418,6 +1536,8 @@ struct InputsTabView: View {
         } label: {
             Label(title, systemImage: icon)
                 .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
                 .background(tint.opacity(0.14))
@@ -1482,10 +1602,7 @@ struct TaxOptimizationTabView: View {
                         selectedInfoTopic: $selectedInfoTopic,
                         value: Binding(
                             get: { engine.result.solvedBav },
-                            set: {
-                                engine.input.solverMode = .manual
-                                engine.input.bavAmount = $0
-                            }
+                            set: { val in engine.updateManualLever { $0.bavAmount = val } }
                         ),
                         range: 0...engine.bavMaxTotal,
                         step: 1_000
@@ -1509,10 +1626,7 @@ struct TaxOptimizationTabView: View {
                         selectedInfoTopic: $selectedInfoTopic,
                         value: Binding(
                             get: { engine.result.solvedDrv },
-                            set: {
-                                engine.input.solverMode = .manual
-                                engine.input.drvV0210Amount = $0
-                            }
+                            set: { val in engine.updateManualLever { $0.drvV0210Amount = val } }
                         ),
                         range: 0...60_000,
                         step: 1_000
@@ -1536,10 +1650,7 @@ struct TaxOptimizationTabView: View {
                         selectedInfoTopic: $selectedInfoTopic,
                         value: Binding(
                             get: { engine.result.solvedRuerup },
-                            set: {
-                                engine.input.solverMode = .manual
-                                engine.input.ruerupAmount = $0
-                            }
+                            set: { val in engine.updateManualLever { $0.ruerupAmount = val } }
                         ),
                         range: 0...max(1_000, engine.result.ruerupMaxCap),
                         step: 500
@@ -1557,6 +1668,17 @@ struct TaxOptimizationTabView: View {
                                 .foregroundStyle(.green)
                         }
                     }
+
+                    Button {
+                        engine.applyRuerupSweetSpot()
+                    } label: {
+                        HStack {
+                            Image(systemName: "target")
+                            Text("Rürup Cash-Plus Sweet-Spot (\(eur(engine.result.ruerupSweetSpot)))")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
                 }
 
                 Section {
@@ -1567,10 +1689,7 @@ struct TaxOptimizationTabView: View {
                         selectedInfoTopic: $selectedInfoTopic,
                         value: Binding(
                             get: { engine.result.solvedPvPurchase },
-                            set: {
-                                engine.input.solverMode = .manual
-                                engine.input.pvIabPurchase = $0
-                            }
+                            set: { val in engine.updateManualLever { $0.pvIabPurchase = val } }
                         ),
                         range: 0...engine.pvIabMaxPurchase,
                         step: 5_000
@@ -1621,23 +1740,29 @@ struct TaxOptimizationTabView: View {
     }
 }
 
-// MARK: - Tab 3: Ergebnis
+// MARK: - Tab 3: Ergebnis (KPIs, Floating Waterfall & 3 Collapsible HTML-Parity Tables)
 
 struct ResultsTabView: View {
     @EnvironmentObject var engine: TaxEngineHost
     @Binding var selectedInfoTopic: StatutoryTopic?
     let onExportPDF: () -> Void
 
+    @State private var showTable1 = true
+    @State private var showTable2 = true
+    @State private var showTable3 = true
+
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                // 4-Card KPI Grid (Card #4 synced with Table 3)
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     kpiCard("Sofort-Netto 2027", value: eur(engine.result.sofortNetto2027), subtitle: "nach AG-Einbehalt", color: .orange)
                     kpiCard("FA-Erstattung Okt. 28", value: eur(engine.result.finanzamtRefundOct2028, showPlus: true), subtitle: "§ 34 Fünftelregelung", color: .green)
                     kpiCard("Optimal-Netto Gesamt", value: eur(engine.result.optimalNettoTotal), subtitle: "Steuerlast: \(eur(engine.result.totalTaxFinal))", color: .blue)
-                    kpiCard("End-Liquidität 2028", value: eur(engine.result.endLiquidity2028), subtitle: "Konto nach Hebeln", color: .purple)
+                    kpiCard("Bar-Liquidität Ende 28", value: eur(engine.result.endLiquidity2028), subtitle: "inkl. Netto-Gehalt 27", color: .purple)
                 }
 
+                // Steuer-Hebel Value Cards
                 if engine.input.taxOptimizationEnabled {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("STEUER-HEBEL ERSPARNIS")
@@ -1655,6 +1780,7 @@ struct ResultsTabView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
 
+                // Cashflow Bar Chart
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("Abfindung: Brutto → Netto 2027/2028")
@@ -1671,16 +1797,17 @@ struct ResultsTabView: View {
                         BarMark(x: .value("Stufe", "Optimal"), y: .value("€", engine.result.optimalNettoTotal))
                             .foregroundStyle(.blue)
                     }
-                    .frame(height: 180)
+                    .frame(height: 175)
                 }
                 .padding(12)
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
 
+                // True Floating 7-Step Sprinter Waterfall Chart
                 if engine.input.turboEnabled {
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("Sprinter Netto-Brücke")
+                            Text("Sprinter Netto-Brücke (Wasserfall)")
                                 .font(.subheadline.weight(.semibold))
                             Spacer()
                             Text(eur(engine.result.sprinterNetGain, showPlus: true))
@@ -1690,38 +1817,100 @@ struct ResultsTabView: View {
                         }
                         Chart(engine.result.waterfallSteps) { step in
                             BarMark(
-                                x: .value("Betrag", step.delta),
+                                xStart: .value("Start", step.start),
+                                xEnd: .value("Ende", step.end),
                                 y: .value("Position", step.label)
                             )
-                            .foregroundStyle(step.isTotal ? Color.blue : (step.delta >= 0 ? Color.green : Color.orange))
+                            .foregroundStyle(
+                                step.isTotal
+                                    ? (step.delta >= 0 ? Color.blue : Color.red)
+                                    : (step.delta >= 0 ? Color.green : Color.orange)
+                            )
+                            .cornerRadius(4)
                         }
-                        .frame(height: 190)
+                        .chartXAxis {
+                            AxisMarks(values: .automatic(desiredCount: 4))
+                        }
+                        .frame(height: 225)
                     }
                     .padding(12)
                     .background(Color(.secondarySystemGroupedBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 14))
                 }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("DETAILS · ABRECHNUNG 2027 / 2028")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    detailRow("2027 Brutto (Alt-AG + Neu-Job)", eur(engine.result.totalGross2027))
-                    detailRow("AG Lohnsteuer-Einbehalt 2027", eur(-engine.result.upfrontPayrollTax))
-                    detailRow("Endgültige Steuerlast (§ 34 EStG)", eur(-engine.result.totalTaxFinal))
+                // Table 1: Sofort-Abrechnung AG (2027)
+                tableCard(
+                    title: "1. Sofort-Abrechnung AG (2027)",
+                    badge: eur(engine.result.sofortNetto2027),
+                    badgeColor: .orange,
+                    isExpanded: $showTable1
+                ) {
+                    tableRow("Basis-Abfindung Brutto", eur(engine.input.bruttoAbfindung))
+                    if engine.input.turboEnabled {
+                        tableRow("+ Sprinter-Prämie Brutto", eur(engine.result.sprinterBonusGross, showPlus: true), valueColor: .green)
+                        tableRow("= Effektive Abfindung Brutto", eur(engine.result.effectiveAbfindung), bold: true)
+                    }
+                    if engine.result.solvedBav > 0 {
+                        tableRow("− bAV-Umwandlung (§ 3 Nr. 63)", eur(-engine.result.solvedBav), valueColor: .blue)
+                    }
+                    if engine.result.solvedDrv > 0 {
+                        tableRow("− DRV-Direktzahlung (V0210)", eur(-engine.result.solvedDrv), valueColor: .teal)
+                    }
+                    tableRow("= Bar-Brutto vor Steuer", eur(engine.result.barBruttoVorSteuer), bold: true)
+                    tableRow("− AG Lohnsteuer-Einbehalt (\(pct(engine.result.upfrontTaxRatePct)))", eur(-engine.result.upfrontPayrollTax), valueColor: .red)
+                    Divider()
+                    tableRow("= Sofort-Netto 2027", eur(engine.result.sofortNetto2027), valueColor: .orange, bold: true)
+                }
+
+                // Table 2: Endabrechnung Finanzamt (Okt. 2028)
+                tableCard(
+                    title: "2. Endabrechnung Finanzamt (2028)",
+                    badge: eur(engine.result.optimalNettoTotal),
+                    badgeColor: .blue,
+                    isExpanded: $showTable2
+                ) {
+                    tableRow("Effektive Abfindung Brutto", eur(engine.result.effectiveAbfindung))
+                    tableRow("2027 Brutto (Alt-AG + Neu-Job)", eur(engine.result.totalGross2027))
+                    tableRow("− Endgültige Steuer (§ 34 · \(pct(engine.result.finalTaxRatePct)))", eur(-engine.result.totalTaxFinal), valueColor: .red)
                     if engine.input.kinderZahl > 0 {
-                        detailRow(
+                        tableRow(
                             "Kinder-Vorteil (\(engine.result.kinderFreibetragWon ? "KFB gewinnt" : "KiG + Soli/KiSt"))",
-                            eur(engine.result.kinderBenefitNet, showPlus: true)
+                            eur(engine.result.kinderBenefitNet, showPlus: true),
+                            valueColor: .green
                         )
                     }
                     if engine.input.churchRate > 0 {
-                        detailRow("Kirchensteuer-Satz aktiv", pct(engine.input.churchRate * 100))
+                        tableRow("Kirchensteuer-Satz berücksichtigt", pct(engine.input.churchRate * 100))
                     }
+                    Divider()
+                    tableRow("= Optimal-Netto Gesamt", eur(engine.result.optimalNettoTotal), valueColor: .blue, bold: true)
+                    tableRow("+ FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: .green, bold: true)
                 }
-                .padding(12)
-                .background(Color(.secondarySystemGroupedBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                // Table 3: Harter Liquiditäts-Zeitstrahl (2027 → 2028)
+                tableCard(
+                    title: "3. Harter Liquiditäts-Zeitstrahl",
+                    badge: eur(engine.result.endLiquidity2028),
+                    badgeColor: .purple,
+                    isExpanded: $showTable3
+                ) {
+                    tableRow("Cash-In: Sofort-Netto Abfindung", eur(engine.result.sofortNetto2027), bold: true)
+                    tableRow("+ Cash-In: Netto-Gehalt 2027", eur(engine.result.netSalary2027, showPlus: true), valueColor: .green)
+                    if engine.result.solvedRuerup > 0 {
+                        tableRow("− Cash-Out: Rürup-Einzahlung", eur(-engine.result.solvedRuerup), valueColor: .indigo)
+                    }
+                    if engine.result.solvedPvPurchase > 0 {
+                        tableRow("− Cash-Out: PV-Kaufpreis (100 % EK)", eur(-engine.result.solvedPvPurchase), valueColor: .orange)
+                    }
+                    if engine.result.ruhensGkvTotal > 0 {
+                        tableRow("− Cash-Out: Freiwillige GKV (Ruhenszeit)", eur(-engine.result.ruhensGkvTotal), valueColor: .red)
+                    }
+                    Divider()
+                    tableRow("= KONTO-CASH am 31.12.2027", eur(engine.result.kontoCashEnd2027), bold: true)
+                    tableRow("+ Cash-In: FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: .green)
+                    Divider()
+                    tableRow("= BAR-LIQUIDITÄT Ende 2028", eur(engine.result.endLiquidity2028), valueColor: .purple, bold: true)
+                }
 
                 Button(action: onExportPDF) {
                     Label("A4 PDF-Report teilen", systemImage: "square.and.arrow.up")
@@ -1734,6 +1923,50 @@ struct ResultsTabView: View {
             .padding()
         }
         .background(Color(.systemGroupedBackground))
+    }
+
+    private func tableCard<Content: View>(
+        title: String,
+        badge: String,
+        badgeColor: Color,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+
+    ) -> some View {
+        DisclosureGroup(isExpanded: isExpanded) {
+            VStack(spacing: 7) {
+                Divider().padding(.top, 4)
+                content()
+            }
+            .padding(.top, 2)
+        } label: {
+            HStack {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text(badge)
+                    .font(.caption.bold())
+                    .monospacedDigit()
+                    .foregroundStyle(badgeColor)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func tableRow(_ left: String, _ right: String, valueColor: Color = .primary, bold: Bool = false) -> some View {
+        HStack {
+            Text(left)
+                .font(bold ? .caption.weight(.semibold) : .caption)
+                .foregroundStyle(bold ? .primary : .secondary)
+            Spacer()
+            Text(right)
+                .font(bold ? .caption.bold() : .caption.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(valueColor)
+        }
     }
 
     private func kpiCard(_ title: String, value: String, subtitle: String, color: Color) -> some View {
@@ -1775,25 +2008,30 @@ struct ResultsTabView: View {
         .background(color.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
-
-    private func detailRow(_ left: String, _ right: String) -> some View {
-        HStack {
-            Text(left).font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Text(right).font(.caption.bold()).monospacedDigit()
-        }
-    }
 }
 
-// MARK: - Tab 4: Reichweite
+// MARK: - Tab 4: Reichweite (Inputs → KPIs → Annotated Phase Bars → Gradient + Delta Ribbon Area Chart)
 
 struct ReichweiteTabView: View {
     @EnvironmentObject var engine: TaxEngineHost
     @Binding var selectedInfoTopic: StatutoryTopic?
 
+    private var phaseMaxX: Double {
+        let m = max(engine.result.standardRunwayMonths, engine.result.sprinterRunwayMonths, engine.result.faRefundMonthIndex)
+        return max(18, m * 1.28)
+    }
+
+    private var winnerPill: (text: String, color: Color) {
+        let diff = Int((engine.result.sprinterRunwayMonths - engine.result.standardRunwayMonths).rounded())
+        if diff > 0 { return ("Sprinter +\(diff) Mon.", .green) }
+        if diff < 0 { return ("Standard +\(abs(diff)) Mon.", .orange) }
+        return ("Gleichstand", .secondary)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                // 1. Inputs First
                 VStack(alignment: .leading, spacing: 10) {
                     Text("PARAMETER · ÜBERLEBEN OHNE JOB")
                         .font(.caption.weight(.semibold))
@@ -1829,6 +2067,7 @@ struct ReichweiteTabView: View {
                     HStack {
                         Text("GKV nach ALG 1")
                             .font(.subheadline.weight(.medium))
+                        InfoIconButton(topic: .postAlg1Gkv, selectedTopic: $selectedInfoTopic)
                         Spacer()
                         Picker("", selection: $engine.input.postAlg1GkvMode) {
                             ForEach(PostAlg1GkvMode.allCases) { m in
@@ -1837,6 +2076,17 @@ struct ReichweiteTabView: View {
                         }
                         .labelsHidden()
                         .pickerStyle(.menu)
+                    }
+
+                    if engine.input.postAlg1GkvMode == .individuell {
+                        CompactSliderRow(
+                            title: "Eigene GKV/PV nach ALG 1",
+                            selectedInfoTopic: $selectedInfoTopic,
+                            value: $engine.input.customPostGkvMonthly,
+                            range: 0...1_400,
+                            step: 20,
+                            valueFormatter: { "\(eur($0))/Mo" }
+                        )
                     }
 
                     CompactSliderRow(
@@ -1855,45 +2105,84 @@ struct ReichweiteTabView: View {
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
 
+                // 2. KPI Comparison Strip
                 HStack(spacing: 10) {
                     runwayKpi("Standard (Frist)", months: engine.result.standardRunwayMonths, date: engine.result.standardDepletionDate, color: .orange)
                     runwayKpi("Sprinter (Sofort)", months: engine.result.sprinterRunwayMonths, date: engine.result.sprinterDepletionDate, color: .green)
                 }
 
+                // 3. Enhanced Stacked Phase Bar Chart with Trailing End Month/Year & FA Okt 28 Marker
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Lebensphasen-Zeitstrahl (Monate)")
-                        .font(.subheadline.weight(.semibold))
-                    Chart(engine.result.runwayPhaseBars) { bar in
-                        BarMark(
-                            xStart: .value("Start", bar.startMonth),
-                            xEnd: .value("Ende", bar.endMonth),
-                            y: .value("Strategie", bar.strategy)
-                        )
-                        .foregroundStyle(by: .value("Phase", bar.phase))
-                        .cornerRadius(4)
+                    HStack {
+                        Text("Lebensphasen-Zeitstrahl")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(winnerPill.text)
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(winnerPill.color.opacity(0.15))
+                            .foregroundStyle(winnerPill.color)
+                            .clipShape(Capsule())
                     }
+
+                    Chart {
+                        ForEach(engine.result.runwayPhaseBars) { bar in
+                            BarMark(
+                                xStart: .value("Start", bar.startMonth),
+                                xEnd: .value("Ende", bar.endMonth),
+                                y: .value("Strategie", bar.strategy)
+                            )
+                            .foregroundStyle(by: .value("Phase", bar.phase))
+                            .cornerRadius(4)
+                            .annotation(position: .overlay) {
+                                if bar.duration >= 5 {
+                                    Text("\(Int(bar.duration))M")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            .annotation(position: .trailing, spacing: 4) {
+                                if bar.isLast {
+                                    Text(bar.endDateLabel)
+                                        .font(.caption2.bold())
+                                        .monospacedDigit()
+                                        .foregroundStyle(bar.strategy == "Sprinter" ? .green : .orange)
+                                }
+                            }
+                        }
+
+                        RuleMark(x: .value("FA Okt. 28", engine.result.faRefundMonthIndex))
+                            .foregroundStyle(Color.purple.opacity(0.8))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                            .annotation(position: .top, alignment: .center) {
+                                Text("FA Okt. 28")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.purple)
+                            }
+                    }
+                    .chartXScale(domain: 0...phaseMaxX)
                     .chartForegroundStyleScale([
                         "Gehalt/Frist": Color.blue,
                         "Ruhenszeit": Color.orange,
                         "ALG 1": Color.cyan,
                         "Privatier": Color.green
                     ])
-                    .frame(height: 130)
+                    .frame(height: 145)
                 }
                 .padding(12)
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
 
-                MultiLayerAreaChartCard(
-                    title: "Konto-Verlauf (€)",
-                    xAxisLabel: "Monate ab Austritt",
+                // 4. Tailored Reichweite Gradient + Delta Ribbon Area Chart with Touch Scrubbing
+                ReichweiteAreaChartCard(
                     points: engine.result.runwayCurve,
                     faMarkerX: engine.result.faRefundMonthIndex,
-                    showZeroBaseline: false,
-                    stdCrossX: engine.result.standardRunwayMonths < 72 ? engine.result.standardRunwayMonths : nil,
-                    sprCrossX: engine.result.sprinterRunwayMonths < 72 ? engine.result.sprinterRunwayMonths : nil
+                    stdDepleteX: engine.result.standardRunwayMonths < 72 ? engine.result.standardRunwayMonths : nil,
+                    sprDepleteX: engine.result.sprinterRunwayMonths < 72 ? engine.result.sprinterRunwayMonths : nil
                 )
 
+                // 5. Milestones
                 VStack(alignment: .leading, spacing: 6) {
                     Text("MEILENSTEINE")
                         .font(.caption.weight(.semibold))
@@ -1937,7 +2226,7 @@ struct ReichweiteTabView: View {
     }
 }
 
-// MARK: - Tab 5: Job-Switch
+// MARK: - Tab 5: Job-Switch (Inputs → KPIs → Zero-Split Surplus/Deficit Area Chart)
 
 struct JobSwitchTabView: View {
     @EnvironmentObject var engine: TaxEngineHost
@@ -1989,12 +2278,9 @@ struct JobSwitchTabView: View {
                     beCard("Sprinter Break-Even", year: engine.result.breakEvenYearSprinter, color: .green)
                 }
 
-                MultiLayerAreaChartCard(
-                    title: "Vermögens-Vorsprung (€ vs. Alt-Job)",
-                    xAxisLabel: "Jahre",
+                // Tailored Zero-Split Surplus/Deficit Area Chart with Touch Scrubbing
+                SwitchAreaChartCard(
                     points: engine.result.switchCurve,
-                    faMarkerX: 2.0,
-                    showZeroBaseline: true,
                     stdCrossX: engine.result.breakEvenYearStandard,
                     sprCrossX: engine.result.breakEvenYearSprinter
                 )
@@ -2043,90 +2329,344 @@ struct JobSwitchTabView: View {
     }
 }
 
-// MARK: - Shared Multi-Layer Filled Area Chart
+// MARK: - Tailored Reichweite Area Chart (Gradient + Delta Ribbon + iOS 17 Scrubbing)
 
-struct MultiLayerAreaChartCard: View {
-    let title: String
-    let xAxisLabel: String
+struct ReichweiteAreaChartCard: View {
     let points: [DualSeriesPoint]
     let faMarkerX: Double
-    let showZeroBaseline: Bool
-    let stdCrossX: Double?
-    let sprCrossX: Double?
+    let stdDepleteX: Double?
+    let sprDepleteX: Double?
+
+    @State private var filter: ChartStrategyFilter = .both
+    @State private var selectedX: Double?
+
+    private var activePoint: DualSeriesPoint? {
+        guard let selectedX else { return nil }
+        return points.min(by: { abs($0.x - selectedX) < abs($1.x - selectedX) })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
+            HStack {
+                Text("Konto-Verlauf (€)")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("", selection: $filter) {
+                    ForEach(ChartStrategyFilter.allCases) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 195)
+            }
+
+            if let pt = activePoint {
+                HStack(spacing: 8) {
+                    Text(pt.label).font(.caption2.bold())
+                    Spacer()
+                    if filter != .sprinter {
+                        Text("Std: \(eur(pt.standardVal))").font(.caption2.bold()).foregroundStyle(.orange)
+                    }
+                    if filter != .standard {
+                        Text("Spr: \(eur(pt.sprinterVal))").font(.caption2.bold()).foregroundStyle(.green)
+                    }
+                }
+                .monospacedDigit()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Text("Tippen & ziehen für Monatswerte")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
 
             Chart {
-                ForEach(points) { pt in
-                    AreaMark(
-                        x: .value(xAxisLabel, pt.x),
-                        yStart: .value("Base", 0),
-                        yEnd: .value("Shared", pt.sharedMin)
-                    )
-                    .foregroundStyle(Color.blue.opacity(0.18))
-
-                    AreaMark(
-                        x: .value(xAxisLabel, pt.x),
-                        yStart: .value("SprLow", pt.sprinterAheadLow),
-                        yEnd: .value("SprHigh", pt.sprinterAheadHigh)
-                    )
-                    .foregroundStyle(Color.green.opacity(0.28))
-
-                    AreaMark(
-                        x: .value(xAxisLabel, pt.x),
-                        yStart: .value("StdLow", pt.standardAheadLow),
-                        yEnd: .value("StdHigh", pt.standardAheadHigh)
-                    )
-                    .foregroundStyle(Color.orange.opacity(0.28))
-
-                    LineMark(
-                        x: .value(xAxisLabel, pt.x),
-                        y: .value("Standard", pt.standardVal),
-                        series: .value("Linie", "Standard")
-                    )
-                    .foregroundStyle(Color.orange)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-
-                    LineMark(
-                        x: .value(xAxisLabel, pt.x),
-                        y: .value("Sprinter", pt.sprinterVal),
-                        series: .value("Linie", "Sprinter")
-                    )
-                    .foregroundStyle(Color.green)
-                    .lineStyle(StrokeStyle(lineWidth: 2))
+                if filter == .both {
+                    ForEach(points) { pt in
+                        AreaMark(
+                            x: .value("Monat", pt.x),
+                            yStart: .value("Basis", 0),
+                            yEnd: .value("Gemeinsam", pt.sharedPositive)
+                        )
+                        .foregroundStyle(by: .value("Bereich", "Gemeinsam"))
+                    }
+                    ForEach(points) { pt in
+                        AreaMark(
+                            x: .value("Monat", pt.x),
+                            yStart: .value("SprLow", pt.sprinterAheadLow),
+                            yEnd: .value("SprHigh", pt.sprinterAheadHigh)
+                        )
+                        .foregroundStyle(by: .value("Bereich", "Sprinter vorn"))
+                    }
+                    ForEach(points) { pt in
+                        AreaMark(
+                            x: .value("Monat", pt.x),
+                            yStart: .value("StdLow", pt.standardAheadLow),
+                            yEnd: .value("StdHigh", pt.standardAheadHigh)
+                        )
+                        .foregroundStyle(by: .value("Bereich", "Standard vorn"))
+                    }
+                } else if filter == .standard {
+                    ForEach(points) { pt in
+                        AreaMark(x: .value("Monat", pt.x), y: .value("Standard", pt.standardVal))
+                            .foregroundStyle(by: .value("Bereich", "Standard vorn"))
+                    }
+                } else {
+                    ForEach(points) { pt in
+                        AreaMark(x: .value("Monat", pt.x), y: .value("Sprinter", pt.sprinterVal))
+                            .foregroundStyle(by: .value("Bereich", "Sprinter vorn"))
+                    }
                 }
 
-                RuleMark(x: .value("FA Okt. 2028", faMarkerX))
-                    .foregroundStyle(Color.purple.opacity(0.75))
-                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-
-                if showZeroBaseline {
-                    RuleMark(y: .value("Break-Even", 0))
-                        .foregroundStyle(Color.red.opacity(0.7))
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
-                }
-
-                if let stdX = stdCrossX {
-                    PointMark(x: .value(xAxisLabel, stdX), y: .value("Null", 0))
+                if filter != .sprinter {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Monat", pt.x),
+                            y: .value("Standard", pt.standardVal),
+                            series: .value("Linie", "Standard")
+                        )
                         .foregroundStyle(Color.orange)
-                        .symbolSize(55)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
                 }
-                if let sprX = sprCrossX {
-                    PointMark(x: .value(xAxisLabel, sprX), y: .value("Null", 0))
+                if filter != .standard {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Monat", pt.x),
+                            y: .value("Sprinter", pt.sprinterVal),
+                            series: .value("Linie", "Sprinter")
+                        )
                         .foregroundStyle(Color.green)
-                        .symbolSize(55)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+
+                RuleMark(x: .value("FA Okt. 28", faMarkerX))
+                    .foregroundStyle(Color.purple.opacity(0.8))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                    .annotation(position: .top, alignment: .center) {
+                        Text("FA Okt. 28")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.purple)
+                    }
+
+                if let pt = activePoint {
+                    RuleMark(x: .value("Auswahl", pt.x))
+                        .foregroundStyle(Color.primary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
+
+                if filter != .sprinter, let stdX = stdDepleteX {
+                    PointMark(x: .value("Monat", stdX), y: .value("Null", 0))
+                        .foregroundStyle(Color.orange)
+                        .symbolSize(50)
+                }
+                if filter != .standard, let sprX = sprDepleteX {
+                    PointMark(x: .value("Monat", sprX), y: .value("Null", 0))
+                        .foregroundStyle(Color.green)
+                        .symbolSize(50)
                 }
             }
-            .frame(height: 215)
+            .chartForegroundStyleScale([
+                "Gemeinsam": LinearGradient(
+                    colors: [Color.blue.opacity(0.35), Color.blue.opacity(0.04)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                "Sprinter vorn": LinearGradient(
+                    colors: [Color.green.opacity(0.38), Color.green.opacity(0.10)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                "Standard vorn": LinearGradient(
+                    colors: [Color.orange.opacity(0.38), Color.orange.opacity(0.10)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            ])
+            .chartLegend(.hidden)
+            .chartXSelection(value: $selectedX)
+            .frame(height: 225)
 
             HStack(spacing: 12) {
                 legendDot("Gemeinsam", color: .blue)
                 legendDot("Sprinter vorn", color: .green)
                 legendDot("Standard vorn", color: .orange)
                 legendDot("FA Okt. 28", color: .purple)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func legendDot(_ text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(text)
+        }
+    }
+}
+
+// MARK: - Tailored Job-Switch Area Chart (Zero-Split Surplus/Deficit + iOS 17 Scrubbing)
+
+struct SwitchAreaChartCard: View {
+    let points: [DualSeriesPoint]
+    let stdCrossX: Double?
+    let sprCrossX: Double?
+
+    @State private var filter: ChartStrategyFilter = .both
+    @State private var selectedX: Double?
+
+    private var activePoint: DualSeriesPoint? {
+        guard let selectedX else { return nil }
+        return points.min(by: { abs($0.x - selectedX) < abs($1.x - selectedX) })
+    }
+
+    private func positiveTop(_ pt: DualSeriesPoint) -> Double {
+        switch filter {
+        case .both: return max(0, max(pt.standardVal, pt.sprinterVal))
+        case .standard: return max(0, pt.standardVal)
+        case .sprinter: return max(0, pt.sprinterVal)
+        }
+    }
+
+    private func negativeBottom(_ pt: DualSeriesPoint) -> Double {
+        switch filter {
+        case .both: return min(0, min(pt.standardVal, pt.sprinterVal))
+        case .standard: return min(0, pt.standardVal)
+        case .sprinter: return min(0, pt.sprinterVal)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Vermögens-Vorsprung (€)")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("", selection: $filter) {
+                    ForEach(ChartStrategyFilter.allCases) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 195)
+            }
+
+            if let pt = activePoint {
+                HStack(spacing: 8) {
+                    Text(pt.label).font(.caption2.bold())
+                    Spacer()
+                    if filter != .sprinter {
+                        Text("Std: \(eur(pt.standardVal, showPlus: true))").font(.caption2.bold()).foregroundStyle(.orange)
+                    }
+                    if filter != .standard {
+                        Text("Spr: \(eur(pt.sprinterVal, showPlus: true))").font(.caption2.bold()).foregroundStyle(.green)
+                    }
+                }
+                .monospacedDigit()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Text("Tippen & ziehen für Jahreswerte")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Chart {
+                ForEach(points) { pt in
+                    AreaMark(
+                        x: .value("Jahr", pt.x),
+                        yStart: .value("Null", 0),
+                        yEnd: .value("Plus", positiveTop(pt))
+                    )
+                    .foregroundStyle(by: .value("Zone", "Plus"))
+                }
+                ForEach(points) { pt in
+                    AreaMark(
+                        x: .value("Jahr", pt.x),
+                        yStart: .value("Minus", negativeBottom(pt)),
+                        yEnd: .value("Null", 0)
+                    )
+                    .foregroundStyle(by: .value("Zone", "Minus"))
+                }
+
+                if filter != .sprinter {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Jahr", pt.x),
+                            y: .value("Standard", pt.standardVal),
+                            series: .value("Linie", "Standard")
+                        )
+                        .foregroundStyle(Color.orange)
+                        .lineStyle(StrokeStyle(lineWidth: 2.2))
+                    }
+                }
+                if filter != .standard {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Jahr", pt.x),
+                            y: .value("Sprinter", pt.sprinterVal),
+                            series: .value("Linie", "Sprinter")
+                        )
+                        .foregroundStyle(Color.green)
+                        .lineStyle(StrokeStyle(lineWidth: 2.2))
+                    }
+                }
+
+                RuleMark(y: .value("Break-Even", 0))
+                    .foregroundStyle(Color.red.opacity(0.75))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+
+                RuleMark(x: .value("FA Okt. 28", 2.0))
+                    .foregroundStyle(Color.purple.opacity(0.75))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+
+                if let pt = activePoint {
+                    RuleMark(x: .value("Auswahl", pt.x))
+                        .foregroundStyle(Color.primary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
+
+                if filter != .sprinter, let stdX = stdCrossX {
+                    PointMark(x: .value("Jahr", stdX), y: .value("Null", 0))
+                        .foregroundStyle(Color.orange)
+                        .symbolSize(55)
+                }
+                if filter != .standard, let sprX = sprCrossX {
+                    PointMark(x: .value("Jahr", sprX), y: .value("Null", 0))
+                        .foregroundStyle(Color.green)
+                        .symbolSize(55)
+                }
+            }
+            .chartForegroundStyleScale([
+                "Plus": LinearGradient(
+                    colors: [Color.teal.opacity(0.32), Color.teal.opacity(0.05)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                "Minus": LinearGradient(
+                    colors: [Color.red.opacity(0.08), Color.red.opacity(0.32)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            ])
+            .chartLegend(.hidden)
+            .chartXSelection(value: $selectedX)
+            .frame(height: 225)
+
+            HStack(spacing: 12) {
+                legendDot("Im Plus", color: .teal)
+                legendDot("Im Minus", color: .red)
+                legendDot("Standard", color: .orange)
+                legendDot("Sprinter", color: .green)
             }
             .font(.caption2)
             .foregroundStyle(.secondary)
