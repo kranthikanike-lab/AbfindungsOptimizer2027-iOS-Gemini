@@ -191,14 +191,15 @@ jobs:
           fi
 
           echo "Apple API authentication successful."
-          name: Ensure AppIcon is 1024x1024 opaque PNG
-  run: |
-    ICON="Shared/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
-    sips -z 1024 1024 "$ICON" --out "$ICON"
-    sips -s format jpeg "$ICON" --out /tmp/icon.jpg
-    sips -s format png /tmp/icon.jpg --out "$ICON"
-    sips -g pixelWidth -g pixelHeight -g hasAlpha "$ICON"
-
+          
+      - name: Ensure AppIcon is 1024x1024 opaque PNG
+        run: |
+          ICON="Shared/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+          sips -z 1024 1024 "$ICON" --out "$ICON"
+          sips -s format jpeg "$ICON" --out /tmp/icon.jpg
+          sips -s format png /tmp/icon.jpg --out "$ICON"
+          sips -g pixelWidth -g pixelHeight -g hasAlpha "$ICON"
+          
       - name: Archive iOS application
         shell: bash
         run: |
