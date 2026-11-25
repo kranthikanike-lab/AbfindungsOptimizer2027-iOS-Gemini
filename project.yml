@@ -9,6 +9,15 @@ targets:
     platform: iOS
     sources:
       - Shared
+    info:
+      path: Shared/Info.plist
+      properties:
+        UILaunchScreen: {}
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight  
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kranthikanike.abfindungsoptimizer2027
