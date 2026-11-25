@@ -1930,7 +1930,8 @@ struct ResultsTabView: View {
         badge: String,
         badgeColor: Color,
         isExpanded: Binding<Bool>,
-        @ViewBuilder content: () -> Content
+        @ViewBuilder content: @escaping () -> Content
+
     ) -> some View {
         DisclosureGroup(isExpanded: isExpanded) {
             VStack(spacing: 7) {
