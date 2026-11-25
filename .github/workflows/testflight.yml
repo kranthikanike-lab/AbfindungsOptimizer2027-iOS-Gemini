@@ -42,6 +42,49 @@ jobs:
           mkdir -p ~/private_keys
           printf '%s' "$ASC_KEY_P8" > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
 
+          
+      - name: Validate Apple API credentials
+        run: |
+          KEY_FILE="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+          echo "Checking private key..."
+          test -s "$KEY_FILE" || {
+            echo "::error::Private key missing or empty"
+            exit 1
+          }
+
+          openssl pkey -in "$KEY_FILE" -noout || {
+            echo "::error::Invalid private key"
+            exit 1
+          }
+
+          echo "Checking Apple API authentication..."
+
+          NOW=$(date +%s)
+          EXP=$((NOW + 300))
+
+          HEADER=$(printf '{"alg":"ES256","kid":"%s","typ":"JWT"}' "$ASC_KEY_ID" | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+
+          PAYLOAD=$(printf '{"iss":"%s","iat":%s,"exp":%s,"aud":"appstoreconnect-v1"}' "$ASC_ISSUER_ID" "$NOW" "$EXP" | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+
+          SIGNATURE=$(printf '%s' "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$KEY_FILE" -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+
+          TOKEN="$HEADER.$PAYLOAD.$SIGNATURE"
+
+          HTTP=$(curl -sS -o /tmp/apple-response.json -w "%{http_code}" \
+            -H "Authorization: Bearer $TOKEN" \
+            "https://api.appstoreconnect.apple.com/v1/apps?limit=1")
+
+          echo "Apple API HTTP status: $HTTP"
+
+          if [ "$HTTP" != "200" ]; then
+            cat /tmp/apple-response.json
+            exit 1
+          fi
+
+          echo "Apple API authentication successful"
+
+
       - name: Archive (unsigned; signing happens during export)
         run: |
           set -o pipefail
