@@ -1,6 +1,6 @@
+
 name: TestFlight upload
 
-# Manual run: GitHub → Actions → "TestFlight upload" → Run workflow
 on:
   workflow_dispatch:
 
@@ -8,85 +8,132 @@ jobs:
   testflight:
     runs-on: macos-26-intel
     timeout-minutes: 45
+
     env:
       BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
       TEAM_ID: ${{ secrets.TEAM_ID }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout
+        uses: actions/checkout@v5
 
       - name: Check secrets
+        shell: bash
         run: |
+          set -euo pipefail
+
           for v in BUNDLE_ID TEAM_ID ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
-            if [ -z "${!v}" ]; then echo "::error::Missing repo secret $v"; exit 1; fi
+            if [ -z "${!v:-}" ]; then
+              echo "::error::Missing GitHub secret: $v"
+              exit 1
+            fi
           done
 
-      - name: Select newest Xcode (Apple requires the current SDK for uploads)
-        run: |
-          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
-          if [ -z "$XC" ]; then echo "::error::No Xcode 26 on this runner"; ls /Applications | grep -i xcode; exit 1; fi
-          sudo xcode-select -s "$XC"
-          xcodebuild -version
+          echo "All required secrets are present."
 
-      - name: Install XcodeGen & generate project
+      - name: Select newest Xcode 26
+        shell: bash
         run: |
+          set -euo pipefail
+
+          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+
+          if [ -z "$XC" ]; then
+            echo "::error::No Xcode 26 found"
+            ls /Applications | grep -i xcode
+            exit 1
+          fi
+
+          sudo xcode-select -s "$XC"
+
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+
           brew install xcodegen
           xcodegen generate
 
-      - name: Write API key
-        run: |
-          BUNDLE_ID=$(printf %s "$BUNDLE_ID" | tr -d '[:space:]'); TEAM_ID=$(printf %s "$TEAM_ID" | tr -d '[:space:]')
-          ASC_KEY_ID=$(printf %s "$ASC_KEY_ID" | tr -d '[:space:]'); ASC_ISSUER_ID=$(printf %s "$ASC_ISSUER_ID" | tr -d '[:space:]')
-          mkdir -p ~/private_keys
-          printf '%s' "$ASC_KEY_P8" > ~/private_keys/AuthKey_${ASC_KEY_ID}.p8
-
-          
-      
-      - name: Validate Apple API credentials
-        env:
-          NODE_NO_WARNINGS: 1
+      - name: Prepare Apple API key
+        shell: bash
         run: |
           set -euo pipefail
 
           export ASC_KEY_ID="$(printf '%s' "$ASC_KEY_ID" | tr -d '[:space:]')"
           export ASC_ISSUER_ID="$(printf '%s' "$ASC_ISSUER_ID" | tr -d '[:space:]')"
 
+          export BUNDLE_ID="$(printf '%s' "$BUNDLE_ID" | tr -d '[:space:]')"
+          export TEAM_ID="$(printf '%s' "$TEAM_ID" | tr -d '[:space:]')"
+
+          mkdir -p "$HOME/private_keys"
+
           KEY_FILE="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
-          test -s "$KEY_FILE"
+
+          printf '%s' "$ASC_KEY_P8" > "$KEY_FILE"
+
+          chmod 600 "$KEY_FILE"
+
+          openssl pkey -in "$KEY_FILE" -noout
+
+          echo "API private key structure validated."
+
+          echo "Runner UTC time:"
+          date -u
+
+          echo "Key ID length: ${#ASC_KEY_ID}"
+          echo "Issuer ID length: ${#ASC_ISSUER_ID}"
+
+          echo "Public key fingerprint:"
+          openssl pkey -in "$KEY_FILE" -pubout -outform DER |
+            openssl sha256
+
+      - name: Validate Apple API authentication
+        shell: bash
+        run: |
+          set -euo pipefail
 
           node <<'NODE'
           const fs = require('fs');
           const crypto = require('crypto');
 
-          const key = fs.readFileSync(
-            `${process.env.HOME}/private_keys/AuthKey_${process.env.ASC_KEY_ID}.p8`
-          );
+          const keyId = process.env.ASC_KEY_ID;
+          const issuerId = process.env.ASC_ISSUER_ID;
+
+          const keyPath =
+            `${process.env.HOME}/private_keys/AuthKey_${keyId}.p8`;
+
+          const key = fs.readFileSync(keyPath);
 
           const now = Math.floor(Date.now() / 1000);
 
           const header = {
             alg: 'ES256',
-            kid: process.env.ASC_KEY_ID,
+            kid: keyId,
             typ: 'JWT'
           };
 
           const payload = {
-            iss: process.env.ASC_ISSUER_ID,
+            iss: issuerId,
             iat: now,
             exp: now + 300,
             aud: 'appstoreconnect-v1'
           };
 
-          const b64 = obj =>
+          const encode = obj =>
             Buffer.from(JSON.stringify(obj)).toString('base64url');
 
-          const input = `${b64(header)}.${b64(payload)}`;
+          const signingInput =
+            `${encode(header)}.${encode(payload)}`;
 
           const signature = crypto.sign(
             'sha256',
-            Buffer.from(input),
+            Buffer.from(signingInput),
             {
               key,
               dsaEncoding: 'ieee-p1363'
@@ -97,10 +144,14 @@ jobs:
             throw new Error('Invalid ES256 signature length');
           }
 
-          const token = `${input}.${signature.toString('base64url')}`;
+          const jwt =
+            `${signingInput}.${signature.toString('base64url')}`;
 
-          fs.writeFileSync('/tmp/apple-jwt', token);
-          console.log('JWT generated with valid ES256 signature format');
+          fs.writeFileSync('/tmp/apple-jwt', jwt, {
+            mode: 0o600
+          });
+
+          console.log('JWT generated using ES256.');
           NODE
 
           HTTP=$(curl -sS \
@@ -113,48 +164,75 @@ jobs:
 
           if [ "$HTTP" != "200" ]; then
             cat /tmp/apple-response.json
+            echo "::error::Apple API authentication failed."
             exit 1
           fi
 
-          echo "SUCCESS: Apple API authentication verified"
+          echo "Apple API authentication successful."
 
-
-
-      - name: Archive (unsigned; signing happens during export)
+      - name: Archive iOS application
+        shell: bash
         run: |
-          set -o pipefail
-          BUNDLE_ID=$(printf %s "$BUNDLE_ID" | tr -d '[:space:]'); TEAM_ID=$(printf %s "$TEAM_ID" | tr -d '[:space:]')
-          ASC_KEY_ID=$(printf %s "$ASC_KEY_ID" | tr -d '[:space:]'); ASC_ISSUER_ID=$(printf %s "$ASC_ISSUER_ID" | tr -d '[:space:]')
+          set -euo pipefail
+
           xcodebuild archive \
-            -project AbfindungsOptimizer2027.xcodeproj -scheme AbfindungsOptimizer2027 \
-            -configuration Release -destination 'generic/platform=iOS' \
+            -project AbfindungsOptimizer2027.xcodeproj \
+            -scheme AbfindungsOptimizer2027 \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
             -archivePath build/App.xcarchive \
             PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CODE_SIGNING_ALLOWED=NO \
-            CURRENT_PROJECT_VERSION="${{ github.run_number }}" | tail -n 40
+            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            | tail -n 40
 
-      - name: Export & upload to TestFlight
+      - name: Export and upload to TestFlight
+        shell: bash
         run: |
-          set -o pipefail
-          BUNDLE_ID=$(printf %s "$BUNDLE_ID" | tr -d '[:space:]'); TEAM_ID=$(printf %s "$TEAM_ID" | tr -d '[:space:]')
-          ASC_KEY_ID=$(printf %s "$ASC_KEY_ID" | tr -d '[:space:]'); ASC_ISSUER_ID=$(printf %s "$ASC_ISSUER_ID" | tr -d '[:space:]')
+          set -euo pipefail
+
+          KEY_FILE="$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+          mkdir -p build/export
+
           cat > build/ExportOptions.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0"><dict>
-            <key>method</key><string>app-store-connect</string>
-            <key>destination</key><string>upload</string>
-            <key>teamID</key><string>$TEAM_ID</string>
-            <key>signingStyle</key><string>automatic</string>
-            <key>uploadSymbols</key><true/>
-          </dict></plist>
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+
+            <key>destination</key>
+            <string>upload</string>
+
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+
+            <key>signingStyle</key>
+            <string>automatic</string>
+
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
           PLIST
+
           xcodebuild -exportArchive \
             -archivePath build/App.xcarchive \
             -exportOptionsPlist build/ExportOptions.plist \
             -exportPath build/export \
             -allowProvisioningUpdates \
-            -authenticationKeyPath ~/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyPath "$KEY_FILE" \
             -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" | tail -n 40
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            | tail -n 40
+
+      - name: Cleanup private credentials
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$HOME/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          rm -f /tmp/apple-jwt
+          rm -f /tmp/apple-response.json
