@@ -8,6 +8,7 @@ enum StatutoryTopic: String, Identifiable {
     case tarifSplitting
     case sprinterLegal
     case alg1Rules
+    case solverModes
     case bav63
     case ruerup10
     case drvV0210
@@ -25,6 +26,7 @@ enum StatutoryTopic: String, Identifiable {
         case .tarifSplitting:    return "Grund- vs. Splittingtarif"
         case .sprinterLegal:     return "Sprinterprämie (§ 34 EStG)"
         case .alg1Rules:         return "ALG 1: Ruhenszeit vs. Sperrzeit"
+        case .solverModes:       return "Auto-Solver Optimierungs-Modi"
         case .bav63:             return "bAV-Umwandlung (§ 3 Nr. 63 EStG)"
         case .ruerup10:          return "Rürup-Rente / Basisrente"
         case .drvV0210:          return "DRV-Ausgleich (§ 187a SGB VI / V0210)"
@@ -42,6 +44,7 @@ enum StatutoryTopic: String, Identifiable {
         case .tarifSplitting:    return "§ 32a / § 34 EStG"
         case .sprinterLegal:     return "§ 24 Nr. 1a & § 34 EStG"
         case .alg1Rules:         return "§§ 148, 158, 159 SGB III"
+        case .solverModes:       return "4 Strategien im Vergleich"
         case .bav63:             return "§ 3 Nr. 63 S. 1 & S. 3 EStG"
         case .ruerup10:          return "§ 10 Abs. 1 Nr. 2 & Abs. 3 EStG"
         case .drvV0210:          return "§ 3 Nr. 28 EStG & V0210"
@@ -56,6 +59,8 @@ enum StatutoryTopic: String, Identifiable {
             return "exclamationmark.triangle.fill"
         case .recht2027:
             return "scale.3d"
+        case .solverModes:
+            return "wand.and.stars"
         default:
             return "info.circle.fill"
         }
@@ -65,7 +70,7 @@ enum StatutoryTopic: String, Identifiable {
         switch self {
         case .sprinterLegal, .tarifSplitting:
             return .orange
-        case .bav63, .ruerup10, .drvV0210, .pvIab7g:
+        case .bav63, .ruerup10, .drvV0210, .pvIab7g, .solverModes:
             return .green
         default:
             return .blue
@@ -88,6 +93,8 @@ enum StatutoryTopic: String, Identifiable {
             return "Damit die Sprinterprämie ebenfalls nach der Fünftelregelung (§ 34 EStG) ermäßigt besteuert wird, gelten zwei strenge Voraussetzungen."
         case .alg1Rules:
             return "Beim Aufhebungsvertrag unterscheiden sich Ruhenszeit (Verschiebung) und Sperrzeit (echte Anspruchskürzung) grundlegend."
+        case .solverModes:
+            return "Der Auto-Solver stellt alle vier Steuer-Hebel automatisch auf Ihr Ziel ein. Sobald Sie einen Regler bewegen, wechselt er nahtlos auf Manuell — ohne die übrigen Werte zurückzusetzen."
         case .bav63:
             return "Direktumwandlung aus der Abfindung in eine betriebliche Altersversorgung spart sofort 2027 Lohnsteuer."
         case .ruerup10:
@@ -119,20 +126,20 @@ enum StatutoryTopic: String, Identifiable {
             ]
         case .preExitGkv:
             return [
-                "Pflichtversichert vor Austritt: Nach § 19 Abs. 2 SGB V besteht nach Ende der Beschäftigung für bis zu 1 Monat ein kostenfreier nachgehender Leistungsanspruch (0 € GKV/PV im 1. Ruhens-Monat).",
-                "Freiwillig versichert vor Austritt: Der nachgehende Leistungsanspruch greift nicht — der freiwillige GKV/PV-Höchstsatz (~1.320 €/Mo bei 2,5 % Zusatzbeitrag) fällt ab Tag 1 der Ruhenszeit an.",
+                "Pflicht GKV vor Austritt: Nach § 19 Abs. 2 SGB V besteht nach Ende der Beschäftigung für bis zu 1 Monat ein kostenfreier nachgehender Leistungsanspruch (0 € GKV/PV im 1. Ruhens-Monat).",
+                "Freiwillig GKV vor Austritt: Der nachgehende Leistungsanspruch greift nicht — der freiwillige GKV/PV-Höchstsatz (~1.320 €/Mo bei 2,5 % Zusatzbeitrag) fällt ab Tag 1 der Ruhenszeit an.",
                 "Freiwillige GKV/PV-Beiträge sind nach § 10 EStG voll als Sonderausgaben absetzbar."
             ]
         case .postAlg1Gkv:
             return [
-                "Mindestbeitrag (~280 €/Mo): Gilt für freiwillig Versicherte ohne laufende steuerpflichtige Einkünfte (reiner Vermögensverzehr aus der Abfindung ist beitragsfrei).",
+                "Mindest (~280 €): Gilt für freiwillig Versicherte ohne laufende steuerpflichtige Einkünfte (reiner Vermögensverzehr aus der Abfindung ist beitragsfrei).",
                 "Kapitalerträge & Mieten: Zinsen, Dividenden und Mieteinnahmen werden ab dem ersten Euro (ohne Sparer-Pauschbetrag) bis zur BBG verbeitragt — wählen Sie dafür 'Individuell'.",
-                "Familienversicherung (0 €/Mo): Möglich, wenn der Ehepartner gesetzlich versichert ist und das eigene Gesamteinkommen unter der monatlichen Einkommensgrenze bleibt."
+                "Familie (0 €): Kostenfreie Familienversicherung, wenn der Ehepartner gesetzlich versichert ist und das eigene Gesamteinkommen unter der monatlichen Einkommensgrenze bleibt."
             ]
         case .tarifSplitting:
             return [
                 "Dauernd getrennt lebende Ehegatten müssen zwingend den Grundtarif (Einzel-Rürup-Limit 32.308 €) wählen.",
-                "Bei Zusammenveranlagung (Splitting-Rürup-Limit 64.616 €) zeigt der Solver die exakte Partner-Gehaltsgrenze, bis zu der Splitting günstiger ist."
+                "Bei Zusammenveranlagung (Splitting-Rürup-Limit 64.616 €) zeigt das Banner direkt den Euro-Vorteil bzw. die Fünftel-Falle gegenüber dem Grundtarif."
             ]
         case .sprinterLegal:
             return [
@@ -145,6 +152,13 @@ enum StatutoryTopic: String, Identifiable {
                 "Ruhenszeit (§ 158 SGB III): Bei Verkürzung der Kündigungsfrist ruht die Auszahlung höchstens für die Dauer der abgekauften Frist — es gehen 0 Anspruchstage verloren.",
                 "Sperrzeit (§§ 148, 159 SGB III): Ein Aufhebungsvertrag ohne wichtigen Grund führt i. d. R. zu 12 Wochen Sperrzeit (läuft zeitgleich zur Ruhenszeit und kürzt den Gesamtanspruch um max. 12 Wochen).",
                 "Wenn Sie Ihren vollen ALG-1-Anspruch nicht bis zum letzten Tag ausschöpfen, entsteht durch die Kürzung 0 € realer Geldverlust."
+            ]
+        case .solverModes:
+            return [
+                "Manuell: Sie steuern alle vier Regler (bAV, Rürup, DRV V0210, PV-IAB) komplett frei nach Ihren eigenen Vorgaben.",
+                "Liquidität (Cash-Plus): Füllt nur Rürup bis zum Cash-Plus Sweet-Spot (zvE-Basis → 0 €, oft >100 % Erstattung) und lässt bAV, DRV und PV-IAB bei 0 € für maximales Bankguthaben.",
+                "Optimal-Netto (Max. Steuer-Hebel): Schöpft bAV und Rürup voll aus und nutzt zusätzlich PV-IAB (§ 7g EStG) für das restliche Basiseinkommen (3-Jahres-Investitionsfrist beachten).",
+                "Altersvorsorge: Maximiert bAV, Rürup und 30.000 € DRV V0210 für maximale spätere Rente — komplett ohne PV-IAB."
             ]
         case .bav63:
             return [
