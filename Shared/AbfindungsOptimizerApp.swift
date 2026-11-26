@@ -446,9 +446,9 @@ final class TaxEngineHost: ObservableObject {
             return floor((171.1 * z + 2_400.0) * z + taxAtB2)
         }
         if x <= b4Single {
-            return floor(0.42 * x - 11_135.63)
+            return floor(0.42 * x - 11_261.23)
         }
-        return floor(0.45 * x - 19_685.63)
+        return floor(0.45 * x - 19_811.23)
     }
 
     private func calcTariff2027(_ zve: Double, isSplitting: Bool) -> Double {
@@ -503,10 +503,15 @@ final class TaxEngineHost: ObservableObject {
         return (estEffective + soli + church, estEffective, soli, church, max(0, kinderNetGain), kfbWon)
     }
 
+    // Steuerklasse III (Splitting withholding) only when sole earner (partner == 0); otherwise StKl I/IV (Grundtarif)
+    private var useSplittingForPayroll: Bool {
+        input.isSplitting && input.partnerGehalt2027 <= 0
+    }
+
     private func calcUpfrontPayrollTax(
         agFiktiv: Double,
         taxableAbfindung: Double,
-        isSplitting: Bool,
+        useSplittingPayroll: Bool,
         churchRate: Double,
         kinderZahl: Double
     ) -> Double {
@@ -518,15 +523,15 @@ final class TaxEngineHost: ObservableObject {
         let anSocial = rvBase * 0.093 + kvBase * (0.073 + input.kvZusatzbeitragPct / 200.0 + pvRate)
         let baseZve = max(0, agFiktiv - min(agFiktiv, anPauschbetrag) - anSocial)
 
-        let baseEst = calcTariff2027(baseZve, isSplitting: isSplitting)
-        let totalEst = calcTariff2027(baseZve + abf, isSplitting: isSplitting)
+        let baseEst = calcTariff2027(baseZve, isSplitting: useSplittingPayroll)
+        let totalEst = calcTariff2027(baseZve + abf, isSplitting: useSplittingPayroll)
         let abfEst = max(0, totalEst - baseEst)
 
         let kfb = kinderZahl * kfbPerChild2027
-        let baseEstKfb = calcTariff2027(max(0, baseZve - kfb), isSplitting: isSplitting)
-        let totalEstKfb = calcTariff2027(max(0, baseZve + abf - kfb), isSplitting: isSplitting)
+        let baseEstKfb = calcTariff2027(max(0, baseZve - kfb), isSplitting: useSplittingPayroll)
+        let totalEstKfb = calcTariff2027(max(0, baseZve + abf - kfb), isSplitting: useSplittingPayroll)
 
-        let abfSoli = max(0, calcSolz2027(totalEstKfb, isSplitting: isSplitting) - calcSolz2027(baseEstKfb, isSplitting: isSplitting))
+        let abfSoli = max(0, calcSolz2027(totalEstKfb, isSplitting: useSplittingPayroll) - calcSolz2027(baseEstKfb, isSplitting: useSplittingPayroll))
         let abfChurch = max(0, totalEstKfb - baseEstKfb) * churchRate
         return abfEst + abfSoli + abfChurch
     }
@@ -562,12 +567,14 @@ final class TaxEngineHost: ObservableObject {
         return sprinter ? preExit : min(12, preExit + inp.fristMonate)
     }
 
+    // § 10 Abs. 3 EStG: Joint cap deducts both own AND partner statutory RV (18.6% up to BBG-RV)
     private func computeRuerupCap(for inp: SimulationInput) -> Double {
         let oldMonths = computeOldJobMonths2027(for: inp, sprinter: inp.turboEnabled)
         let totalGross = Double(oldMonths) * inp.altesMonatsgehalt + inp.neuesGehalt2027
-        let rvTotal = min(totalGross, bbgRvYear) * 0.186
+        let ownRv = min(totalGross, bbgRvYear) * 0.186
+        let partnerRv = inp.isSplitting ? min(inp.partnerGehalt2027, bbgRvYear) * 0.186 : 0
         let limit = inp.isSplitting ? ruerupMaxSingle * 2.0 : ruerupMaxSingle
-        return max(0, limit - rvTotal)
+        return max(0, limit - ownRv - partnerRv)
     }
 
     private func voluntaryGkvMonthly() -> Double {
@@ -577,9 +584,16 @@ final class TaxEngineHost: ObservableObject {
         return monthlyBbgKv * (0.146 + input.kvZusatzbeitragPct / 100.0 + pvTotal)
     }
 
+    // §§ 149-153 SGB III: 20% SV flat rate + 2027 Lohnsteuer & Soli (StKl III only if sole earner, else StKl I/IV)
     private func monthlyAlg1Net() -> Double {
-        let cappedMonthly = min(input.altesMonatsgehalt, bbgRvYear / 12.0)
-        return cappedMonthly * 0.64 * (input.alg1SatzPct / 100.0)
+        let cappedAnnual = min(input.altesMonatsgehalt * 12.0, bbgRvYear)
+        if cappedAnnual <= 0 { return 0 }
+        let svFlat = cappedAnnual * 0.20
+        let emp = employeeSocialAndZve(gross: cappedAnnual, kinderZahl: input.kinderZahl)
+        let lst = calcTariff2027(emp.zve, isSplitting: useSplittingForPayroll)
+        let soli = calcSolz2027(lst, isSplitting: useSplittingForPayroll)
+        let leistungsentgeltYear = max(0, cappedAnnual - svFlat - lst - soli)
+        return (leistungsentgeltYear / 12.0) * (input.alg1SatzPct / 100.0)
     }
 
     // MARK: Master Recalculation
@@ -596,7 +610,7 @@ final class TaxEngineHost: ObservableObject {
         r.totalGross2027 = totalGross
         r.netSalary2027 = annualNetSalary(
             annualGross: totalGross,
-            isSplitting: input.isSplitting,
+            isSplitting: useSplittingForPayroll,
             churchRate: input.churchRate,
             kinderZahl: input.kinderZahl
         )
@@ -622,7 +636,8 @@ final class TaxEngineHost: ObservableObject {
             return employeeSocialAndZve(gross: input.partnerGehalt2027, kinderZahl: input.kinderZahl).zve
         }()
 
-        let rawBaseBeforeLevers = emp.zve + partnerZve - ruhensGkvTotal
+        let payrollBaseZve = emp.zve + partnerZve
+        let rawBaseBeforeLevers = payrollBaseZve - ruhensGkvTotal
 
         // 4. Rürup Cap & Solver Gate
         let ruerupCap = computeRuerupCap(for: input)
@@ -674,7 +689,7 @@ final class TaxEngineHost: ObservableObject {
         let upfrontTax = calcUpfrontPayrollTax(
             agFiktiv: input.agFiktivGehalt,
             taxableAbfindung: taxableAbfForPayroll,
-            isSplitting: input.isSplitting,
+            useSplittingPayroll: useSplittingForPayroll,
             churchRate: input.churchRate,
             kinderZahl: input.kinderZahl
         )
@@ -682,12 +697,12 @@ final class TaxEngineHost: ObservableObject {
         r.upfrontTaxRatePct = barBrutto > 0 ? (upfrontTax / barBrutto) * 100.0 : 0
         r.sofortNetto2027 = max(0, barBrutto - upfrontTax)
 
-        // 6. Final 2028 Finanzamt Assessment
+        // 6. Final 2028 Finanzamt Assessment (Uncapped so wage-tax & GKV refunds are preserved)
         let taxableAbfFinal = max(0, effectiveAbf - effBav - effDrv * 0.5)
         let rawBaseWithLevers = rawBaseBeforeLevers - effRuerup - (effPv * 0.5)
 
-        let taxBaseOnly = calcTotalTaxWithKinder(
-            rawBaseZve: rawBaseBeforeLevers,
+        let taxPaidOnBasePayroll = calcTotalTaxWithKinder(
+            rawBaseZve: payrollBaseZve,
             abfindung: 0,
             isSplitting: input.isSplitting,
             churchRate: input.churchRate,
@@ -702,24 +717,24 @@ final class TaxEngineHost: ObservableObject {
             kinderZahl: input.kinderZahl
         )
 
-        let abfTaxFinal = max(0, taxFinalObj.totalTax - taxBaseOnly)
+        let abfTaxFinal = taxFinalObj.totalTax - taxPaidOnBasePayroll
         r.totalTaxFinal = abfTaxFinal
-        r.finalTaxRatePct = barBrutto > 0 ? (abfTaxFinal / barBrutto) * 100.0 : 0
+        r.finalTaxRatePct = effectiveAbf > 0 ? (abfTaxFinal / effectiveAbf) * 100.0 : 0
         r.kinderBenefitNet = taxFinalObj.kinderNetGain
         r.kinderFreibetragWon = taxFinalObj.kfbWon
 
-        r.finanzamtRefundOct2028 = upfrontTax - abfTaxFinal
+        r.finanzamtRefundOct2028 = (taxPaidOnBasePayroll + upfrontTax) - taxFinalObj.totalTax
         r.optimalNettoTotal = effectiveAbf - abfTaxFinal
 
-        // Table 3 Hard Liquidity Reconciliation (Synced with KPI Card #4)
-        r.kontoCashEnd2027 = r.sofortNetto2027 + r.netSalary2027 - effRuerup - effPv - ruhensGkvTotal
+        // Table 3 Hard Liquidity Reconciliation (PV-IAB = 0 € Cash 2027; synced with KPI Card #4)
+        r.kontoCashEnd2027 = r.sofortNetto2027 + r.netSalary2027 - effRuerup - ruhensGkvTotal
         r.endLiquidity2028 = r.kontoCashEnd2027 + r.finanzamtRefundOct2028
 
         // 7. Standalone Lever Attribution & bAV Max-Cap Preview
         let upfrontNoBav = calcUpfrontPayrollTax(
             agFiktiv: input.agFiktivGehalt,
             taxableAbfindung: max(0, effectiveAbf - effDrv * 0.5),
-            isSplitting: input.isSplitting,
+            useSplittingPayroll: useSplittingForPayroll,
             churchRate: input.churchRate,
             kinderZahl: input.kinderZahl
         )
@@ -731,14 +746,14 @@ final class TaxEngineHost: ObservableObject {
         let upfrontAtMaxBav = calcUpfrontPayrollTax(
             agFiktiv: input.agFiktivGehalt,
             taxableAbfindung: max(0, effectiveAbf - maxBavCap),
-            isSplitting: input.isSplitting,
+            useSplittingPayroll: useSplittingForPayroll,
             churchRate: input.churchRate,
             kinderZahl: input.kinderZahl
         )
         let upfrontAtZeroBav = calcUpfrontPayrollTax(
             agFiktiv: input.agFiktivGehalt,
             taxableAbfindung: effectiveAbf,
-            isSplitting: input.isSplitting,
+            useSplittingPayroll: useSplittingForPayroll,
             churchRate: input.churchRate,
             kinderZahl: input.kinderZahl
         )
@@ -775,30 +790,35 @@ final class TaxEngineHost: ObservableObject {
         r.iabSavings = max(0, taxNoIab - taxFinalObj.totalTax)
         r.iabSavingsPct = effPv > 0 ? (r.iabSavings / effPv) * 100.0 : 0
 
-        // 8. Exact Splitting Advantage / Fünftel-Falle & Partner Break-Even
-        let ownBaseForSplit = emp.zve - ruhensGkvTotal - effRuerup - effPv * 0.5
+        // 8. Pure Abfindung-Only Splitting Advantage / Fünftel-Falle (Single Rürup legally capped)
+        let ownSingleRuerupCap = max(0, ruerupMaxSingle - min(totalGross, bbgRvYear) * 0.186)
+        let ownSingleRuerup = min(effRuerup, ownSingleRuerupCap)
+        let ownBaseWithLeversSingle = emp.zve - ruhensGkvTotal - ownSingleRuerup - effPv * 0.5
+        let ownBaseWithLeversSplit = emp.zve - ruhensGkvTotal - effRuerup - effPv * 0.5
+
         r.partnerSplittingBreakEvenMax = findMaxPartnerGrossForSplitting(
-            ownBaseZve: ownBaseForSplit,
+            ownPayrollBaseZve: emp.zve,
+            ownBaseWithLeversSingle: ownBaseWithLeversSingle,
+            ownBaseWithLeversSplit: ownBaseWithLeversSplit,
             abfindung: taxableAbfFinal
         )
         if input.isSplitting {
-            let singleRuerupCap = max(0, ruerupMaxSingle - min(totalGross, bbgRvYear) * 0.186)
-            let ownSingleRuerup = min(effRuerup, singleRuerupCap)
-            let sepOwnTax = calcTotalTaxWithKinder(
-                rawBaseZve: emp.zve - ruhensGkvTotal - ownSingleRuerup - effPv * 0.5,
+            let singleBaseTax = calcTotalTaxWithKinder(
+                rawBaseZve: emp.zve,
+                abfindung: 0,
+                isSplitting: false,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            ).totalTax
+            let singleTotalTax = calcTotalTaxWithKinder(
+                rawBaseZve: ownBaseWithLeversSingle,
                 abfindung: taxableAbfFinal,
                 isSplitting: false,
                 churchRate: input.churchRate,
                 kinderZahl: input.kinderZahl
             ).totalTax
-            let sepPartnerTax = calcTotalTaxWithKinder(
-                rawBaseZve: partnerZve,
-                abfindung: 0,
-                isSplitting: false,
-                churchRate: input.churchRate,
-                kinderZahl: 0
-            ).totalTax
-            r.splittingAdvantageEur = (sepOwnTax + sepPartnerTax) - taxFinalObj.totalTax
+            let abfTaxSingle = singleTotalTax - singleBaseTax
+            r.splittingAdvantageEur = abfTaxSingle - abfTaxFinal
         } else {
             r.splittingAdvantageEur = 0
         }
@@ -807,10 +827,10 @@ final class TaxEngineHost: ObservableObject {
         computeSprinterWaterfall(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
 
         // 10. Section C: Reichweite
-        computeReichweite(into: &r, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
+        computeReichweite(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
 
         // 11. Section D: Job-Switch
-        computeJobSwitch(into: &r, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
+        computeJobSwitch(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
 
         self.result = r
     }
@@ -846,8 +866,8 @@ final class TaxEngineHost: ObservableObject {
         let extraTaxOnBonus = max(0, taxSprFull - taxSprBase)
         let nettoPraemie = max(0, bonusGross - extraTaxOnBonus)
 
-        let netSalStd = annualNetSalary(annualGross: stdGross, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
-        let netSalSpr = annualNetSalary(annualGross: sprGross, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+        let netSalStd = annualNetSalary(annualGross: stdGross, isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+        let netSalSpr = annualNetSalary(annualGross: sprGross, isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
         let lostNetSalary = max(0, netSalStd - netSalSpr)
 
         let wealthNoTurbo = (stdGross - stdEmp.socialTotal) + baseTaxableAbf - taxStdBase
@@ -880,16 +900,68 @@ final class TaxEngineHost: ObservableObject {
         r.waterfallSteps = steps
     }
 
-    private func findMaxPartnerGrossForSplitting(ownBaseZve: Double, abfindung: Double) -> Double {
+    private func findMaxPartnerGrossForSplitting(
+        ownPayrollBaseZve: Double,
+        ownBaseWithLeversSingle: Double,
+        ownBaseWithLeversSplit: Double,
+        abfindung: Double
+    ) -> Double {
+        let singleBaseTax = calcTotalTaxWithKinder(
+            rawBaseZve: ownPayrollBaseZve,
+            abfindung: 0,
+            isSplitting: false,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        let singleTotalTax = calcTotalTaxWithKinder(
+            rawBaseZve: ownBaseWithLeversSingle,
+            abfindung: abfindung,
+            isSplitting: false,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        let abfTaxSingle = singleTotalTax - singleBaseTax
+
+        let splitAtZeroBase = calcTotalTaxWithKinder(
+            rawBaseZve: ownPayrollBaseZve,
+            abfindung: 0,
+            isSplitting: true,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        let splitAtZeroTotal = calcTotalTaxWithKinder(
+            rawBaseZve: ownBaseWithLeversSplit,
+            abfindung: abfindung,
+            isSplitting: true,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        if (splitAtZeroTotal - splitAtZeroBase) >= abfTaxSingle - 1.0 {
+            return 0
+        }
+
         var lo = 0.0
         var hi = 250_000.0
         for _ in 0..<22 {
             let mid = (lo + hi) / 2.0
             let pZve = employeeSocialAndZve(gross: mid, kinderZahl: input.kinderZahl).zve
-            let joint = calcTotalTaxWithKinder(rawBaseZve: ownBaseZve + pZve, abfindung: abfindung, isSplitting: true, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
-            let sepOwn = calcTotalTaxWithKinder(rawBaseZve: ownBaseZve, abfindung: abfindung, isSplitting: false, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
-            let sepPartner = calcTotalTaxWithKinder(rawBaseZve: pZve, abfindung: 0, isSplitting: false, churchRate: input.churchRate, kinderZahl: 0).totalTax
-            if joint <= (sepOwn + sepPartner) { lo = mid } else { hi = mid }
+            let splitBaseTax = calcTotalTaxWithKinder(
+                rawBaseZve: ownPayrollBaseZve + pZve,
+                abfindung: 0,
+                isSplitting: true,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            ).totalTax
+            let splitTotalTax = calcTotalTaxWithKinder(
+                rawBaseZve: ownBaseWithLeversSplit + pZve,
+                abfindung: abfindung,
+                isSplitting: true,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            ).totalTax
+            let abfTaxSplit = splitTotalTax - splitBaseTax
+
+            if abfTaxSplit < abfTaxSingle - 1.0 { lo = mid } else { hi = mid }
         }
         return (lo / 500.0).rounded() * 500.0
     }
@@ -902,7 +974,7 @@ final class TaxEngineHost: ObservableObject {
         return "\(names[m]) \(year)"
     }
 
-    private func computeReichweite(into r: inout SimulationResult, effBav: Double, effDrv: Double, effRuerup: Double, effPv: Double) {
+    private func computeReichweite(into r: inout SimulationResult, partnerZve: Double, effBav: Double, effDrv: Double, effRuerup: Double, effPv: Double) {
         let alg1 = monthlyAlg1Net()
         let postGkv: Double = {
             switch input.postAlg1GkvMode {
@@ -913,7 +985,7 @@ final class TaxEngineHost: ObservableObject {
         }()
         let netSalMonthly = annualNetSalary(
             annualGross: input.altesMonatsgehalt * 12.0,
-            isSplitting: input.isSplitting,
+            isSplitting: useSplittingForPayroll,
             churchRate: input.churchRate,
             kinderZahl: input.kinderZahl
         ) / 12.0
@@ -928,23 +1000,24 @@ final class TaxEngineHost: ObservableObject {
             let taxPay = calcUpfrontPayrollTax(
                 agFiktiv: input.agFiktivGehalt,
                 taxableAbfindung: max(0, abfGross - effBav - effDrv * 0.5),
-                isSplitting: input.isSplitting,
+                useSplittingPayroll: useSplittingForPayroll,
                 churchRate: input.churchRate,
                 kinderZahl: input.kinderZahl
             )
             let sofort = max(0, abfGross - effBav - effDrv - taxPay)
 
             let salMonths27 = computeOldJobMonths2027(for: input, sprinter: isSprinter)
-            let gross27 = Double(salMonths27) * input.altesMonatsgehalt
+            let gross27 = Double(salMonths27) * input.altesMonatsgehalt + input.neuesGehalt2027
             let emp27 = employeeSocialAndZve(gross: gross27, kinderZahl: input.kinderZahl)
             let ruhens = isSprinter ? input.fristMonate : 0
             let billableGkv = (input.preExitGkv == .pflicht) ? max(0, ruhens - 1) : ruhens
             let ruhensGkv = Double(billableGkv) * voluntaryGkvMonthly()
-            let baseZve = emp27.zve - ruhensGkv
+            let payrollBase = emp27.zve + partnerZve
+            let baseZve = payrollBase - ruhensGkv
 
-            let baseTax = calcTotalTaxWithKinder(rawBaseZve: baseZve, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let baseTax = calcTotalTaxWithKinder(rawBaseZve: payrollBase, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
             let finalTax = calcTotalTaxWithKinder(rawBaseZve: baseZve - effRuerup - effPv * 0.5, abfindung: max(0, abfGross - effBav - effDrv * 0.5), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
-            let faRefund = max(0, taxPay - max(0, finalTax - baseTax))
+            let faSettlement = (baseTax + taxPay) - finalTax
 
             var cash = max(0, sofort - effRuerup - input.upfrontSpend2027)
             let noticePhase = isSprinter ? 0 : input.fristMonate
@@ -957,7 +1030,7 @@ final class TaxEngineHost: ObservableObject {
             var depletedMonth: Double = 72
 
             for m in 1...72 {
-                if m == max(1, faOffset) { cash += faRefund }
+                if m == max(1, faOffset) { cash += faSettlement }
                 if m <= noticePhase {
                     if input.includeSalarySurplus { cash += max(0, netSalMonthly - input.monthlyExpenses) }
                 } else if m <= noticePhase + ruhens {
@@ -1038,7 +1111,7 @@ final class TaxEngineHost: ObservableObject {
         r.runwayCurve = pts
     }
 
-    private func computeJobSwitch(into r: inout SimulationResult, effBav: Double, effDrv: Double, effRuerup: Double, effPv: Double) {
+    private func computeJobSwitch(into r: inout SimulationResult, partnerZve: Double, effBav: Double, effDrv: Double, effRuerup: Double, effPv: Double) {
         let oldAnnual = input.altesMonatsgehalt * 12.0
         let newAnnual = input.switchNewAnnualGross
         let growth = input.switchAnnualGrowthPct / 100.0
@@ -1049,30 +1122,31 @@ final class TaxEngineHost: ObservableObject {
             let taxPay = calcUpfrontPayrollTax(
                 agFiktiv: input.agFiktivGehalt,
                 taxableAbfindung: max(0, abfGross - effBav - effDrv * 0.5),
-                isSplitting: input.isSplitting,
+                useSplittingPayroll: useSplittingForPayroll,
                 churchRate: input.churchRate,
                 kinderZahl: input.kinderZahl
             )
             let sofort = max(0, abfGross - effBav - effDrv - taxPay)
             let salMonths27 = computeOldJobMonths2027(for: input, sprinter: isSprinter)
-            let gross27 = Double(salMonths27) * input.altesMonatsgehalt
+            let gross27 = Double(salMonths27) * input.altesMonatsgehalt + input.neuesGehalt2027
             let emp27 = employeeSocialAndZve(gross: gross27, kinderZahl: input.kinderZahl)
             let ruhens = isSprinter ? input.fristMonate : 0
             let billableGkv = (input.preExitGkv == .pflicht) ? max(0, ruhens - 1) : ruhens
             let ruhensGkv = Double(billableGkv) * voluntaryGkvMonthly()
-            let baseZve = emp27.zve - ruhensGkv
-            let baseTax = calcTotalTaxWithKinder(rawBaseZve: baseZve, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let payrollBase = emp27.zve + partnerZve
+            let baseZve = payrollBase - ruhensGkv
+            let baseTax = calcTotalTaxWithKinder(rawBaseZve: payrollBase, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
             let finalTax = calcTotalTaxWithKinder(rawBaseZve: baseZve - effRuerup - effPv * 0.5, abfindung: max(0, abfGross - effBav - effDrv * 0.5), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
-            let faRefund = max(0, taxPay - max(0, finalTax - baseTax))
+            let faSettlement = (baseTax + taxPay) - finalTax
 
             var delta = sofort - effRuerup - ruhensGkv
             var curve: [Double] = [delta]
             var breakEven: Double? = nil
 
             for yr in 1...15 {
-                if yr == 2 { delta += faRefund }
-                let oldNetYr = annualNetSalary(annualGross: oldAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
-                let newNetYr = annualNetSalary(annualGross: newAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+                if yr == 2 { delta += faSettlement }
+                let oldNetYr = annualNetSalary(annualGross: oldAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+                let newNetYr = annualNetSalary(annualGross: newAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
 
                 var yearDiff = newNetYr - oldNetYr
                 if yr == 1 && input.switchStartDelayMonths > 0 {
@@ -1489,7 +1563,9 @@ struct InputsTabView: View {
                 if engine.input.isSplitting {
                     CompactSliderRow(
                         title: "Gehalt Partner/in 2027",
-                        subtitle: "Splitting-Vorteil bis ca. \(eur(engine.result.partnerSplittingBreakEvenMax))",
+                        subtitle: engine.result.partnerSplittingBreakEvenMax > 0
+                            ? "Abfindungs-Vorteil bis ca. \(eur(engine.result.partnerSplittingBreakEvenMax))"
+                            : "Kein Abfindungs-Vorteil durch Splitting",
                         selectedInfoTopic: $selectedInfoTopic,
                         value: $engine.input.partnerGehalt2027,
                         range: 0...150_000,
@@ -1497,23 +1573,33 @@ struct InputsTabView: View {
                     )
 
                     let adv = engine.result.splittingAdvantageEur
+                    let bannerColor: Color = adv > 1 ? .green : (adv < -1 ? .red : .secondary)
+                    let bannerIcon = adv > 1 ? "checkmark.circle.fill" : (adv < -1 ? "exclamationmark.triangle.fill" : "equal.circle.fill")
+                    let bannerText: String = {
+                        if adv > 1 {
+                            return "Abfindungs-Vorteil: \(eur(adv, showPlus: true)) gegenüber Grundtarif"
+                        } else if adv < -1 {
+                            return "Fünftel-Falle (Abfindung): \(eur(adv)) Nachteil — Grundtarif günstiger"
+                        } else {
+                            return "Neutral (0 €): Kein Splitting-Vorteil auf die Abfindung"
+                        }
+                    }()
+
                     HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: adv >= 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        Image(systemName: bannerIcon)
                             .font(.caption)
-                            .foregroundStyle(adv >= 0 ? .green : .red)
+                            .foregroundStyle(bannerColor)
                             .padding(.top, 1)
-                        Text(adv >= 0
-                             ? "Splitting-Vorteil: \(eur(adv, showPlus: true)) gegenüber Grundtarif"
-                             : "Fünftel-Falle: \(eur(adv)) Nachteil (Grundtarif ist günstiger)")
+                        Text(bannerText)
                             .font(.caption.weight(.semibold))
                             .monospacedDigit()
-                            .foregroundStyle(adv >= 0 ? .green : .red)
+                            .foregroundStyle(bannerColor)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(.vertical, 6)
                     .padding(.horizontal, 10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background((adv >= 0 ? Color.green : Color.red).opacity(0.12))
+                    .background(bannerColor.opacity(0.12))
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
 
@@ -1726,7 +1812,7 @@ struct TaxOptimizationTabView: View {
                     }
                 }
 
-                // Lever 2: Rürup / Basisrente (Moved above DRV)
+                // Lever 2: Rürup / Basisrente
                 Section {
                     CompactSliderRow(
                         title: "2. Rürup / Basisrente",
@@ -1976,7 +2062,11 @@ struct ResultsTabView: View {
                 ) {
                     tableRow("Effektive Abfindung Brutto", eur(engine.result.effectiveAbfindung))
                     tableRow("2027 Brutto (Alt-AG + Neu-Job)", eur(engine.result.totalGross2027))
-                    tableRow("− Endgültige Steuer (§ 34 · \(pct(engine.result.finalTaxRatePct)))", eur(-engine.result.totalTaxFinal), valueColor: .red)
+                    if engine.result.totalTaxFinal >= 0 {
+                        tableRow("− Endgültige Steuer (§ 34 · \(pct(engine.result.finalTaxRatePct)))", eur(-engine.result.totalTaxFinal), valueColor: .red)
+                    } else {
+                        tableRow("+ Steuer-Gutschrift (inkl. LSt-Erstattung)", eur(-engine.result.totalTaxFinal, showPlus: true), valueColor: .green)
+                    }
                     if engine.input.kinderZahl > 0 {
                         tableRow(
                             "Kinder-Vorteil (\(engine.result.kinderFreibetragWon ? "KFB gewinnt" : "KiG + Soli/KiSt"))",
@@ -1989,7 +2079,7 @@ struct ResultsTabView: View {
                     }
                     Divider()
                     tableRow("= Optimal-Netto Gesamt", eur(engine.result.optimalNettoTotal), valueColor: .blue, bold: true)
-                    tableRow("+ FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: .green, bold: true)
+                    tableRow("+ FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: engine.result.finanzamtRefundOct2028 >= 0 ? .green : .red, bold: true)
                 }
 
                 tableCard(
@@ -2004,14 +2094,14 @@ struct ResultsTabView: View {
                         tableRow("− Cash-Out: Rürup-Einzahlung", eur(-engine.result.solvedRuerup), valueColor: .indigo)
                     }
                     if engine.result.solvedPvPurchase > 0 {
-                        tableRow("− Cash-Out: PV-Kaufpreis (100 % EK)", eur(-engine.result.solvedPvPurchase), valueColor: .orange)
+                        tableRow("Info: PV-IAB (3 J. Frist · 0 € Cash 2027)", "0 €", valueColor: .secondary)
                     }
                     if engine.result.ruhensGkvTotal > 0 {
                         tableRow("− Cash-Out: Freiwillige GKV (Ruhenszeit)", eur(-engine.result.ruhensGkvTotal), valueColor: .red)
                     }
                     Divider()
                     tableRow("= KONTO-CASH am 31.12.2027", eur(engine.result.kontoCashEnd2027), bold: true)
-                    tableRow("+ Cash-In: FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: .green)
+                    tableRow("+ Cash-In: FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: engine.result.finanzamtRefundOct2028 >= 0 ? .green : .red)
                     Divider()
                     tableRow("= BAR-LIQUIDITÄT Ende 2028", eur(engine.result.endLiquidity2028), valueColor: .purple, bold: true)
                 }
