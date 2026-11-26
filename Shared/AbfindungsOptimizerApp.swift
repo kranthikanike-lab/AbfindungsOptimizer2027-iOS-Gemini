@@ -481,4 +481,2410 @@ final class TaxEngineHost: ObservableObject {
         churchRate: Double,
         kinderZahl: Double
     ) -> (totalTax: Double, estFinal: Double, soli: Double, church: Double, kinderNetGain: Double, kfbWon: Bool) {
-        let estNoKfb = calcFuenft
+        let estNoKfb = calcFuenftelESt(rawBaseZve, abfindung: abfindung, isSplitting: isSplitting)
+        let kfbTotal = kinderZahl * kfbPerChild2027
+        let kgTotal = kinderZahl * kindergeldPerChild2027
+
+        let estWithKfb = kinderZahl > 0
+            ? calcFuenftelESt(rawBaseZve - kfbTotal, abfindung: abfindung, isSplitting: isSplitting)
+            : estNoKfb
+
+        let estSaving = estNoKfb - estWithKfb
+        let kfbWon = kinderZahl > 0 && (estSaving > kgTotal)
+        let estEffective = kfbWon ? (estWithKfb + kgTotal) : estNoKfb
+
+        let soli = calcSolz2027(estWithKfb, isSplitting: isSplitting)
+        let church = estWithKfb * churchRate
+
+        let soliNoKfb = calcSolz2027(estNoKfb, isSplitting: isSplitting)
+        let churchNoKfb = estNoKfb * churchRate
+        let kinderNetGain = (kfbWon ? (estSaving - kgTotal) : 0) + (soliNoKfb - soli) + (churchNoKfb - church)
+
+        return (estEffective + soli + church, estEffective, soli, church, max(0, kinderNetGain), kfbWon)
+    }
+
+    // Steuerklasse III (Splitting withholding) only when sole earner (partner == 0); otherwise StKl I/IV (Grundtarif)
+    private var useSplittingForPayroll: Bool {
+        input.isSplitting && input.partnerGehalt2027 <= 0
+    }
+
+    private func calcUpfrontPayrollTax(
+        agFiktiv: Double,
+        taxableAbfindung: Double,
+        useSplittingPayroll: Bool,
+        churchRate: Double,
+        kinderZahl: Double
+    ) -> Double {
+        let abf = max(0, taxableAbfindung)
+        if abf <= 0 { return 0 }
+        let rvBase = min(agFiktiv, bbgRvYear)
+        let kvBase = min(agFiktiv, bbgKvYear)
+        let pvRate = pvEmployeeRate(kinderZahl: kinderZahl)
+        let anSocial = rvBase * 0.093 + kvBase * (0.073 + input.kvZusatzbeitragPct / 200.0 + pvRate)
+        let baseZve = max(0, agFiktiv - min(agFiktiv, anPauschbetrag) - anSocial)
+
+        let baseEst = calcTariff2027(baseZve, isSplitting: useSplittingPayroll)
+        let totalEst = calcTariff2027(baseZve + abf, isSplitting: useSplittingPayroll)
+        let abfEst = max(0, totalEst - baseEst)
+
+        let kfb = kinderZahl * kfbPerChild2027
+        let baseEstKfb = calcTariff2027(max(0, baseZve - kfb), isSplitting: useSplittingPayroll)
+        let totalEstKfb = calcTariff2027(max(0, baseZve + abf - kfb), isSplitting: useSplittingPayroll)
+
+        let abfSoli = max(0, calcSolz2027(totalEstKfb, isSplitting: useSplittingPayroll) - calcSolz2027(baseEstKfb, isSplitting: useSplittingPayroll))
+        let abfChurch = max(0, totalEstKfb - baseEstKfb) * churchRate
+        return abfEst + abfSoli + abfChurch
+    }
+
+    private func pvEmployeeRate(kinderZahl: Double) -> Double {
+        let kids = Int(ceil(kinderZahl))
+        if kids == 0 { return 0.024 }
+        if kids == 1 { return 0.018 }
+        if kids == 2 { return 0.0155 }
+        return 0.013
+    }
+
+    private func employeeSocialAndZve(gross: Double, kinderZahl: Double) -> (socialTotal: Double, deductibleSocial: Double, zve: Double) {
+        if gross <= 0 { return (0, 0, 0) }
+        let rv = min(gross, bbgRvYear) * 0.093
+        let alv = min(gross, bbgRvYear) * 0.013
+        let kv = min(gross, bbgKvYear) * (0.073 + input.kvZusatzbeitragPct / 200.0)
+        let pv = min(gross, bbgKvYear) * pvEmployeeRate(kinderZahl: kinderZahl)
+        let deductible = rv + kv + pv
+        let zve = max(0, gross - min(gross, anPauschbetrag) - deductible)
+        return (rv + alv + kv + pv, deductible, zve)
+    }
+
+    private func annualNetSalary(annualGross: Double, isSplitting: Bool, churchRate: Double, kinderZahl: Double) -> Double {
+        if annualGross <= 0 { return 0 }
+        let s = employeeSocialAndZve(gross: annualGross, kinderZahl: kinderZahl)
+        let tax = calcTotalTaxWithKinder(rawBaseZve: s.zve, abfindung: 0, isSplitting: isSplitting, churchRate: churchRate, kinderZahl: kinderZahl).totalTax
+        return max(0, annualGross - s.socialTotal - tax)
+    }
+
+    private func computeOldJobMonths2027(for inp: SimulationInput, sprinter: Bool) -> Int {
+        let preExit = max(0, inp.payoutMonth2027 - 1)
+        return sprinter ? preExit : min(12, preExit + inp.fristMonate)
+    }
+
+    // § 10 Abs. 3 EStG: Joint cap deducts both own AND partner statutory RV (18.6% up to BBG-RV)
+    private func computeRuerupCap(for inp: SimulationInput) -> Double {
+        let oldMonths = computeOldJobMonths2027(for: inp, sprinter: inp.turboEnabled)
+        let totalGross = Double(oldMonths) * inp.altesMonatsgehalt + inp.neuesGehalt2027
+        let ownRv = min(totalGross, bbgRvYear) * 0.186
+        let partnerRv = inp.isSplitting ? min(inp.partnerGehalt2027, bbgRvYear) * 0.186 : 0
+        let limit = inp.isSplitting ? ruerupMaxSingle * 2.0 : ruerupMaxSingle
+        return max(0, limit - ownRv - partnerRv)
+    }
+
+    private func voluntaryGkvMonthly() -> Double {
+        if input.preExitGkv == .pkv { return 900 }
+        let monthlyBbgKv = bbgKvYear / 12.0
+        let pvTotal = input.kinderZahl > 0 ? 0.036 : 0.042
+        return monthlyBbgKv * (0.146 + input.kvZusatzbeitragPct / 100.0 + pvTotal)
+    }
+
+    // §§ 149-153 SGB III: 20% SV flat rate + 2027 Lohnsteuer & Soli (StKl III only if sole earner, else StKl I/IV)
+    private func monthlyAlg1Net() -> Double {
+        let cappedAnnual = min(input.altesMonatsgehalt * 12.0, bbgRvYear)
+        if cappedAnnual <= 0 { return 0 }
+        let svFlat = cappedAnnual * 0.20
+        let emp = employeeSocialAndZve(gross: cappedAnnual, kinderZahl: input.kinderZahl)
+        let lst = calcTariff2027(emp.zve, isSplitting: useSplittingForPayroll)
+        let soli = calcSolz2027(lst, isSplitting: useSplittingForPayroll)
+        let leistungsentgeltYear = max(0, cappedAnnual - svFlat - lst - soli)
+        return (leistungsentgeltYear / 12.0) * (input.alg1SatzPct / 100.0)
+    }
+
+    // MARK: Master Recalculation
+
+    func recalculate() {
+        var r = SimulationResult()
+
+        // 1. 2027 Gross & Net Salary Split
+        let oldMonths = computeOldJobMonths2027(for: input, sprinter: input.turboEnabled)
+        let oldGross = Double(oldMonths) * input.altesMonatsgehalt
+        let totalGross = oldGross + input.neuesGehalt2027
+        r.oldJobMonths2027 = oldMonths
+        r.oldJobGross2027 = oldGross
+        r.totalGross2027 = totalGross
+        r.netSalary2027 = annualNetSalary(
+            annualGross: totalGross,
+            isSplitting: useSplittingForPayroll,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        )
+
+        // 2. Effective Severance & Sprinter Bonus
+        let sprinterBonus = input.turboEnabled
+            ? Double(input.fristMonate) * input.altesMonatsgehalt * input.turboFaktor
+            : 0
+        let effectiveAbf = input.bruttoAbfindung + sprinterBonus
+        r.sprinterBonusGross = sprinterBonus
+        r.effectiveAbfindung = effectiveAbf
+
+        // 3. Base Deductions & Ruhenszeit GKV
+        let emp = employeeSocialAndZve(gross: totalGross, kinderZahl: input.kinderZahl)
+        let ruhensMonths = input.turboEnabled ? input.fristMonate : 0
+        r.ruhenszeitMonths = ruhensMonths
+        let billableGkvMonths = (input.preExitGkv == .pflicht) ? max(0, ruhensMonths - 1) : ruhensMonths
+        let ruhensGkvTotal = Double(billableGkvMonths) * voluntaryGkvMonthly()
+        r.ruhensGkvTotal = ruhensGkvTotal
+
+        let partnerZve: Double = {
+            guard input.isSplitting && input.partnerGehalt2027 > 0 else { return 0 }
+            return employeeSocialAndZve(gross: input.partnerGehalt2027, kinderZahl: input.kinderZahl).zve
+        }()
+
+        let payrollBaseZve = emp.zve + partnerZve
+        let rawBaseBeforeLevers = payrollBaseZve - ruhensGkvTotal
+
+        // 4. Rürup Cap & Solver Gate
+        let ruerupCap = computeRuerupCap(for: input)
+        r.ruerupMaxCap = ruerupCap
+        r.ruerupSweetSpot = min(ruerupCap, max(0, rawBaseBeforeLevers))
+
+        var effBav = 0.0
+        var effDrv = 0.0
+        var effRuerup = 0.0
+        var effPv = 0.0
+
+        if input.taxOptimizationEnabled {
+            switch input.solverMode {
+            case .manual:
+                effBav = min(input.bavAmount, min(bavMaxTotal, effectiveAbf))
+                effDrv = min(input.drvV0210Amount, max(0, effectiveAbf - effBav))
+                effRuerup = min(input.ruerupAmount, ruerupCap)
+                effPv = min(input.pvIabPurchase, pvIabMaxPurchase)
+            case .optimal:
+                effBav = min(bavMaxTotal, effectiveAbf)
+                effDrv = 0
+                effRuerup = ruerupCap
+                let remBase = max(0, rawBaseBeforeLevers - effRuerup)
+                effPv = min(pvIabMaxPurchase, remBase * 2.0)
+            case .liquidity:
+                effBav = 0
+                effDrv = 0
+                effRuerup = min(ruerupCap, max(0, rawBaseBeforeLevers))
+                effPv = 0
+            case .retirement:
+                effBav = min(bavMaxTotal, effectiveAbf)
+                effDrv = min(30_000, max(0, effectiveAbf - effBav))
+                effRuerup = ruerupCap
+                effPv = 0
+            }
+        }
+
+        r.solvedBav = effBav
+        r.solvedDrv = effDrv
+        r.solvedRuerup = effRuerup
+        r.solvedPvPurchase = effPv
+        r.ruerupCapRemaining = max(0, ruerupCap - effRuerup)
+        r.iabSweetSpotPurchase = min(pvIabMaxPurchase, max(0, (rawBaseBeforeLevers - effRuerup) * 2.0))
+
+        // 5. Upfront 2027 Payroll Withholding
+        let barBrutto = max(0, effectiveAbf - effBav - effDrv)
+        r.barBruttoVorSteuer = barBrutto
+        let taxableAbfForPayroll = max(0, effectiveAbf - effBav - effDrv * 0.5)
+        let upfrontTax = calcUpfrontPayrollTax(
+            agFiktiv: input.agFiktivGehalt,
+            taxableAbfindung: taxableAbfForPayroll,
+            useSplittingPayroll: useSplittingForPayroll,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        )
+        r.upfrontPayrollTax = upfrontTax
+        r.upfrontTaxRatePct = barBrutto > 0 ? (upfrontTax / barBrutto) * 100.0 : 0
+        r.sofortNetto2027 = max(0, barBrutto - upfrontTax)
+
+        // 6. Final 2028 Finanzamt Assessment (Uncapped so wage-tax & GKV refunds are preserved)
+        let taxableAbfFinal = max(0, effectiveAbf - effBav - effDrv * 0.5)
+        let rawBaseWithLevers = rawBaseBeforeLevers - effRuerup - (effPv * 0.5)
+
+        let taxPaidOnBasePayroll = calcTotalTaxWithKinder(
+            rawBaseZve: payrollBaseZve,
+            abfindung: 0,
+            isSplitting: input.isSplitting,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+
+        let taxFinalObj = calcTotalTaxWithKinder(
+            rawBaseZve: rawBaseWithLevers,
+            abfindung: taxableAbfFinal,
+            isSplitting: input.isSplitting,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        )
+
+        let abfTaxFinal = taxFinalObj.totalTax - taxPaidOnBasePayroll
+        r.totalTaxFinal = abfTaxFinal
+        r.finalTaxRatePct = effectiveAbf > 0 ? (abfTaxFinal / effectiveAbf) * 100.0 : 0
+        r.kinderBenefitNet = taxFinalObj.kinderNetGain
+        r.kinderFreibetragWon = taxFinalObj.kfbWon
+
+        r.finanzamtRefundOct2028 = (taxPaidOnBasePayroll + upfrontTax) - taxFinalObj.totalTax
+        r.optimalNettoTotal = effectiveAbf - abfTaxFinal
+
+        // Table 3 Hard Liquidity Reconciliation (PV-IAB = 0 € Cash 2027; synced with KPI Card #4)
+        r.kontoCashEnd2027 = r.sofortNetto2027 + r.netSalary2027 - effRuerup - ruhensGkvTotal
+        r.endLiquidity2028 = r.kontoCashEnd2027 + r.finanzamtRefundOct2028
+
+        // 7. Standalone Lever Attribution & bAV Max-Cap Preview
+        let upfrontNoBav = calcUpfrontPayrollTax(
+            agFiktiv: input.agFiktivGehalt,
+            taxableAbfindung: max(0, effectiveAbf - effDrv * 0.5),
+            useSplittingPayroll: useSplittingForPayroll,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        )
+        let bavSav = max(0, upfrontNoBav - upfrontTax)
+        r.bavSavings = bavSav
+        r.bavSavingsPct = effBav > 0 ? (bavSav / effBav) * 100.0 : 0
+
+        let maxBavCap = min(bavMaxTotal, effectiveAbf)
+        let upfrontAtMaxBav = calcUpfrontPayrollTax(
+            agFiktiv: input.agFiktivGehalt,
+            taxableAbfindung: max(0, effectiveAbf - maxBavCap),
+            useSplittingPayroll: useSplittingForPayroll,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        )
+        let upfrontAtZeroBav = calcUpfrontPayrollTax(
+            agFiktiv: input.agFiktivGehalt,
+            taxableAbfindung: effectiveAbf,
+            useSplittingPayroll: useSplittingForPayroll,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        )
+        r.bavMaxCapSavings = max(0, upfrontAtZeroBav - upfrontAtMaxBav)
+        r.bavMaxCapPct = maxBavCap > 0 ? (r.bavMaxCapSavings / maxBavCap) * 100.0 : 0
+
+        let taxNoDrv = calcTotalTaxWithKinder(
+            rawBaseZve: rawBaseWithLevers,
+            abfindung: max(0, effectiveAbf - effBav),
+            isSplitting: input.isSplitting,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        r.drvSavings = max(0, taxNoDrv - taxFinalObj.totalTax)
+        r.drvSavingsPct = effDrv > 0 ? (r.drvSavings / effDrv) * 100.0 : 0
+
+        let taxNoRuerup = calcTotalTaxWithKinder(
+            rawBaseZve: rawBaseWithLevers + effRuerup,
+            abfindung: taxableAbfFinal,
+            isSplitting: input.isSplitting,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        r.ruerupSavings = max(0, taxNoRuerup - taxFinalObj.totalTax)
+        r.ruerupSavingsPct = effRuerup > 0 ? (r.ruerupSavings / effRuerup) * 100.0 : 0
+
+        let taxNoIab = calcTotalTaxWithKinder(
+            rawBaseZve: rawBaseWithLevers + effPv * 0.5,
+            abfindung: taxableAbfFinal,
+            isSplitting: input.isSplitting,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        r.iabSavings = max(0, taxNoIab - taxFinalObj.totalTax)
+        r.iabSavingsPct = effPv > 0 ? (r.iabSavings / effPv) * 100.0 : 0
+
+        // 8. Pure Abfindung-Only Splitting Advantage / Fünftel-Falle (Single Rürup legally capped)
+        let ownSingleRuerupCap = max(0, ruerupMaxSingle - min(totalGross, bbgRvYear) * 0.186)
+        let ownSingleRuerup = min(effRuerup, ownSingleRuerupCap)
+        let ownBaseWithLeversSingle = emp.zve - ruhensGkvTotal - ownSingleRuerup - effPv * 0.5
+        let ownBaseWithLeversSplit = emp.zve - ruhensGkvTotal - effRuerup - effPv * 0.5
+
+        r.partnerSplittingBreakEvenMax = findMaxPartnerGrossForSplitting(
+            ownPayrollBaseZve: emp.zve,
+            ownBaseWithLeversSingle: ownBaseWithLeversSingle,
+            ownBaseWithLeversSplit: ownBaseWithLeversSplit,
+            abfindung: taxableAbfFinal
+        )
+        if input.isSplitting {
+            let singleBaseTax = calcTotalTaxWithKinder(
+                rawBaseZve: emp.zve,
+                abfindung: 0,
+                isSplitting: false,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            ).totalTax
+            let singleTotalTax = calcTotalTaxWithKinder(
+                rawBaseZve: ownBaseWithLeversSingle,
+                abfindung: taxableAbfFinal,
+                isSplitting: false,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            ).totalTax
+            let abfTaxSingle = singleTotalTax - singleBaseTax
+            r.splittingAdvantageEur = abfTaxSingle - abfTaxFinal
+        } else {
+            r.splittingAdvantageEur = 0
+        }
+
+        // 9. Exact 7-Step Floating Sprinter Waterfall Bridge
+        computeSprinterWaterfall(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
+
+        // 10. Section C: Reichweite
+        computeReichweite(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
+
+        // 11. Section D: Job-Switch
+        computeJobSwitch(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
+
+        self.result = r
+    }
+
+    private func computeSprinterWaterfall(
+        into r: inout SimulationResult,
+        partnerZve: Double,
+        effBav: Double,
+        effDrv: Double,
+        effRuerup: Double,
+        effPv: Double
+    ) {
+        let bonusGross = Double(input.fristMonate) * input.altesMonatsgehalt * input.turboFaktor
+        let baseTaxableAbf = max(0, input.bruttoAbfindung - effBav - effDrv * 0.5)
+        let fullTaxableAbf = max(0, input.bruttoAbfindung + bonusGross - effBav - effDrv * 0.5)
+
+        let stdGross = Double(computeOldJobMonths2027(for: input, sprinter: false)) * input.altesMonatsgehalt + input.neuesGehalt2027
+        let sprGross = Double(computeOldJobMonths2027(for: input, sprinter: true)) * input.altesMonatsgehalt + input.neuesGehalt2027
+
+        let stdEmp = employeeSocialAndZve(gross: stdGross, kinderZahl: input.kinderZahl)
+        let sprEmp = employeeSocialAndZve(gross: sprGross, kinderZahl: input.kinderZahl)
+
+        let billableGkvMonths = (input.preExitGkv == .pflicht) ? max(0, input.fristMonate - 1) : input.fristMonate
+        let gkvCost = Double(billableGkvMonths) * voluntaryGkvMonthly()
+
+        let stdZveLevers = stdEmp.zve + partnerZve - effRuerup - effPv * 0.5
+        let sprZveLevers = sprEmp.zve + partnerZve - gkvCost - effRuerup - effPv * 0.5
+
+        let taxStdBase = calcTotalTaxWithKinder(rawBaseZve: stdZveLevers, abfindung: baseTaxableAbf, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+        let taxSprBase = calcTotalTaxWithKinder(rawBaseZve: sprZveLevers, abfindung: baseTaxableAbf, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+        let taxSprFull = calcTotalTaxWithKinder(rawBaseZve: sprZveLevers, abfindung: fullTaxableAbf, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+
+        let extraTaxOnBonus = max(0, taxSprFull - taxSprBase)
+        let nettoPraemie = max(0, bonusGross - extraTaxOnBonus)
+
+        let netSalStd = annualNetSalary(annualGross: stdGross, isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+        let netSalSpr = annualNetSalary(annualGross: sprGross, isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+        let lostNetSalary = max(0, netSalStd - netSalSpr)
+
+        let wealthNoTurbo = (stdGross - stdEmp.socialTotal) + baseTaxableAbf - taxStdBase
+        let wealthSprBase = (sprGross - sprEmp.socialTotal) + baseTaxableAbf - taxSprBase
+        let fuenftelAdvantage = (wealthSprBase - wealthNoTurbo) + lostNetSalary
+
+        let rvLoss = Double(input.fristMonate) * min(input.altesMonatsgehalt, bbgRvYear / 12.0) * 0.186
+        let alg1Loss = input.includeAlg1Loss ? min(Double(input.fristMonate), 12.0 / 4.333) * monthlyAlg1Net() : 0
+
+        var rawItems: [(String, Double)] = [
+            ("+ Netto-Prämie", nettoPraemie),
+            ("+ Fünftel-Hebel", fuenftelAdvantage),
+            ("− Netto-Gehalt", -lostNetSalary),
+            ("− GKV Ruhenszeit", -gkvCost),
+            ("− RV-Punkte", -rvLoss)
+        ]
+        if input.includeAlg1Loss && alg1Loss > 0 {
+            rawItems.append(("− ALG-1 Sperrzeit", -alg1Loss))
+        }
+
+        var cursor = 0.0
+        var steps: [WaterfallStep] = []
+        for (label, delta) in rawItems {
+            let next = cursor + delta
+            steps.append(WaterfallStep(label: label, start: min(cursor, next), end: max(cursor, next), delta: delta, isTotal: false))
+            cursor = next
+        }
+        r.sprinterNetGain = cursor
+        steps.append(WaterfallStep(label: "= Sprinter-Bilanz", start: min(0, cursor), end: max(0, cursor), delta: cursor, isTotal: true))
+        r.waterfallSteps = steps
+    }
+
+    private func findMaxPartnerGrossForSplitting(
+        ownPayrollBaseZve: Double,
+        ownBaseWithLeversSingle: Double,
+        ownBaseWithLeversSplit: Double,
+        abfindung: Double
+    ) -> Double {
+        let singleBaseTax = calcTotalTaxWithKinder(
+            rawBaseZve: ownPayrollBaseZve,
+            abfindung: 0,
+            isSplitting: false,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        let singleTotalTax = calcTotalTaxWithKinder(
+            rawBaseZve: ownBaseWithLeversSingle,
+            abfindung: abfindung,
+            isSplitting: false,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        let abfTaxSingle = singleTotalTax - singleBaseTax
+
+        let splitAtZeroBase = calcTotalTaxWithKinder(
+            rawBaseZve: ownPayrollBaseZve,
+            abfindung: 0,
+            isSplitting: true,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        let splitAtZeroTotal = calcTotalTaxWithKinder(
+            rawBaseZve: ownBaseWithLeversSplit,
+            abfindung: abfindung,
+            isSplitting: true,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ).totalTax
+        if (splitAtZeroTotal - splitAtZeroBase) >= abfTaxSingle - 1.0 {
+            return 0
+        }
+
+        var lo = 0.0
+        var hi = 250_000.0
+        for _ in 0..<22 {
+            let mid = (lo + hi) / 2.0
+            let pZve = employeeSocialAndZve(gross: mid, kinderZahl: input.kinderZahl).zve
+            let splitBaseTax = calcTotalTaxWithKinder(
+                rawBaseZve: ownPayrollBaseZve + pZve,
+                abfindung: 0,
+                isSplitting: true,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            ).totalTax
+            let splitTotalTax = calcTotalTaxWithKinder(
+                rawBaseZve: ownBaseWithLeversSplit + pZve,
+                abfindung: abfindung,
+                isSplitting: true,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            ).totalTax
+            let abfTaxSplit = splitTotalTax - splitBaseTax
+
+            if abfTaxSplit < abfTaxSingle - 1.0 { lo = mid } else { hi = mid }
+        }
+        return (lo / 500.0).rounded() * 500.0
+    }
+
+    private func formatMonthOffset(_ monthsFromJan2027: Int) -> String {
+        let names = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+        let total = max(0, monthsFromJan2027)
+        let year = 2027 + total / 12
+        let m = total % 12
+        return "\(names[m]) \(year)"
+    }
+
+    private func computeReichweite(into r: inout SimulationResult, partnerZve: Double, effBav: Double, effDrv: Double, effRuerup: Double, effPv: Double) {
+        let alg1 = monthlyAlg1Net()
+        let postGkv: Double = {
+            switch input.postAlg1GkvMode {
+            case .mindestbeitrag: return 280
+            case .familienversicherung: return 0
+            case .individuell: return input.customPostGkvMonthly
+            }
+        }()
+        let netSalMonthly = annualNetSalary(
+            annualGross: input.altesMonatsgehalt * 12.0,
+            isSplitting: useSplittingForPayroll,
+            churchRate: input.churchRate,
+            kinderZahl: input.kinderZahl
+        ) / 12.0
+        let monthlyRate = input.realReturnPct / 100.0 / 12.0
+        let startOffset = max(0, input.payoutMonth2027 - 1)
+        let faOffset = 21 - startOffset
+        r.faRefundMonthIndex = Double(max(1, faOffset))
+
+        func simulateRunway(isSprinter: Bool) -> (months: Double, alg1End: Int, bridgeSafe: Bool, series: [Double], bars: [RunwayPhaseBar]) {
+            let label = isSprinter ? "Sprinter" : "Standard"
+            let abfGross = input.bruttoAbfindung + (isSprinter ? Double(input.fristMonate) * input.altesMonatsgehalt * input.turboFaktor : 0)
+            let taxPay = calcUpfrontPayrollTax(
+                agFiktiv: input.agFiktivGehalt,
+                taxableAbfindung: max(0, abfGross - effBav - effDrv * 0.5),
+                useSplittingPayroll: useSplittingForPayroll,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            )
+            let sofort = max(0, abfGross - effBav - effDrv - taxPay)
+
+            let salMonths27 = computeOldJobMonths2027(for: input, sprinter: isSprinter)
+            let gross27 = Double(salMonths27) * input.altesMonatsgehalt + input.neuesGehalt2027
+            let emp27 = employeeSocialAndZve(gross: gross27, kinderZahl: input.kinderZahl)
+            let ruhens = isSprinter ? input.fristMonate : 0
+            let billableGkv = (input.preExitGkv == .pflicht) ? max(0, ruhens - 1) : ruhens
+            let ruhensGkv = Double(billableGkv) * voluntaryGkvMonthly()
+            let payrollBase = emp27.zve + partnerZve
+            let baseZve = payrollBase - ruhensGkv
+
+            let baseTax = calcTotalTaxWithKinder(rawBaseZve: payrollBase, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let finalTax = calcTotalTaxWithKinder(rawBaseZve: baseZve - effRuerup - effPv * 0.5, abfindung: max(0, abfGross - effBav - effDrv * 0.5), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let faSettlement = (baseTax + taxPay) - finalTax
+
+            var cash = max(0, sofort - effRuerup - input.upfrontSpend2027)
+            let noticePhase = isSprinter ? 0 : input.fristMonate
+            let alg1Dur = isSprinter && input.includeAlg1Loss
+                ? max(0, input.alg1ClaimMonths - Int((12.0 / 4.333).rounded()))
+                : input.alg1ClaimMonths
+
+            var series: [Double] = [cash]
+            var bridgeSafe = true
+            var depletedMonth: Double = 72
+
+            for m in 1...72 {
+                if m == max(1, faOffset) { cash += faSettlement }
+                if m <= noticePhase {
+                    if input.includeSalarySurplus { cash += max(0, netSalMonthly - input.monthlyExpenses) }
+                } else if m <= noticePhase + ruhens {
+                    let gkvThisMonth = (input.preExitGkv == .pflicht && m == noticePhase + 1) ? 0 : voluntaryGkvMonthly()
+                    cash -= (input.monthlyExpenses + gkvThisMonth)
+                } else if m <= noticePhase + ruhens + alg1Dur {
+                    cash -= max(0, input.monthlyExpenses - alg1)
+                } else {
+                    cash -= (input.monthlyExpenses + postGkv)
+                }
+
+                if cash > 0 { cash *= (1.0 + monthlyRate) }
+                if m < max(1, faOffset) && cash < 0 { bridgeSafe = false }
+                if cash <= 0 && depletedMonth == 72 { depletedMonth = Double(m) }
+                series.append(max(0, cash))
+            }
+
+            let endLabel = depletedMonth >= 72 ? "> 6 J." : formatMonthOffset(startOffset + Int(depletedMonth))
+            var rawSegments: [(String, Double, Double)] = []
+            var cursor = 0.0
+            if noticePhase > 0 {
+                let end = min(depletedMonth, cursor + Double(noticePhase))
+                rawSegments.append(("Gehalt/Frist", cursor, end))
+                cursor = end
+            }
+            if ruhens > 0 && cursor < depletedMonth {
+                let end = min(depletedMonth, cursor + Double(ruhens))
+                rawSegments.append(("Ruhenszeit", cursor, end))
+                cursor = end
+            }
+            if alg1Dur > 0 && cursor < depletedMonth {
+                let end = min(depletedMonth, cursor + Double(alg1Dur))
+                rawSegments.append(("ALG 1", cursor, end))
+                cursor = end
+            }
+            if cursor < depletedMonth {
+                rawSegments.append(("Privatier", cursor, depletedMonth))
+            }
+
+            let bars: [RunwayPhaseBar] = rawSegments.enumerated().map { idx, seg in
+                RunwayPhaseBar(
+                    strategy: label,
+                    phase: seg.0,
+                    startMonth: seg.1,
+                    endMonth: seg.2,
+                    isLast: idx == rawSegments.count - 1,
+                    endDateLabel: endLabel
+                )
+            }
+
+            let alg1End = startOffset + noticePhase + ruhens + alg1Dur
+            return (depletedMonth, alg1End, bridgeSafe, series, bars)
+        }
+
+        let std = simulateRunway(isSprinter: false)
+        let spr = simulateRunway(isSprinter: true)
+
+        r.standardRunwayMonths = std.months
+        r.sprinterRunwayMonths = spr.months
+        r.standardDepletionDate = std.months >= 72 ? "> 6 Jahre" : formatMonthOffset(startOffset + Int(std.months))
+        r.sprinterDepletionDate = spr.months >= 72 ? "> 6 Jahre" : formatMonthOffset(startOffset + Int(spr.months))
+        r.standardAlg1EndDate = formatMonthOffset(std.alg1End)
+        r.sprinterAlg1EndDate = formatMonthOffset(spr.alg1End)
+        r.standardBridgeSafe = std.bridgeSafe
+        r.sprinterBridgeSafe = spr.bridgeSafe
+        r.runwayPhaseBars = std.bars + spr.bars
+
+        let maxPlot = min(72, max(24, Int(max(std.months, spr.months)) + 4))
+        var pts: [DualSeriesPoint] = []
+        for m in 0...maxPlot {
+            pts.append(DualSeriesPoint(
+                x: Double(m),
+                label: formatMonthOffset(startOffset + m),
+                standardVal: std.series[m],
+                sprinterVal: spr.series[m]
+            ))
+        }
+        r.runwayCurve = pts
+    }
+
+    private func computeJobSwitch(into r: inout SimulationResult, partnerZve: Double, effBav: Double, effDrv: Double, effRuerup: Double, effPv: Double) {
+        let oldAnnual = input.altesMonatsgehalt * 12.0
+        let newAnnual = input.switchNewAnnualGross
+        let growth = input.switchAnnualGrowthPct / 100.0
+        let alg1 = monthlyAlg1Net()
+
+        func simulateSwitch(isSprinter: Bool) -> (curve: [Double], breakEvenYear: Double?) {
+            let abfGross = input.bruttoAbfindung + (isSprinter ? Double(input.fristMonate) * input.altesMonatsgehalt * input.turboFaktor : 0)
+            let taxPay = calcUpfrontPayrollTax(
+                agFiktiv: input.agFiktivGehalt,
+                taxableAbfindung: max(0, abfGross - effBav - effDrv * 0.5),
+                useSplittingPayroll: useSplittingForPayroll,
+                churchRate: input.churchRate,
+                kinderZahl: input.kinderZahl
+            )
+            let sofort = max(0, abfGross - effBav - effDrv - taxPay)
+            let salMonths27 = computeOldJobMonths2027(for: input, sprinter: isSprinter)
+            let gross27 = Double(salMonths27) * input.altesMonatsgehalt + input.neuesGehalt2027
+            let emp27 = employeeSocialAndZve(gross: gross27, kinderZahl: input.kinderZahl)
+            let ruhens = isSprinter ? input.fristMonate : 0
+            let billableGkv = (input.preExitGkv == .pflicht) ? max(0, ruhens - 1) : ruhens
+            let ruhensGkv = Double(billableGkv) * voluntaryGkvMonthly()
+            let payrollBase = emp27.zve + partnerZve
+            let baseZve = payrollBase - ruhensGkv
+            let baseTax = calcTotalTaxWithKinder(rawBaseZve: payrollBase, abfindung: 0, isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let finalTax = calcTotalTaxWithKinder(rawBaseZve: baseZve - effRuerup - effPv * 0.5, abfindung: max(0, abfGross - effBav - effDrv * 0.5), isSplitting: input.isSplitting, churchRate: input.churchRate, kinderZahl: input.kinderZahl).totalTax
+            let faSettlement = (baseTax + taxPay) - finalTax
+
+            var delta = sofort - effRuerup - ruhensGkv
+            var curve: [Double] = [delta]
+            var breakEven: Double? = nil
+
+            for yr in 1...15 {
+                if yr == 2 { delta += faSettlement }
+                let oldNetYr = annualNetSalary(annualGross: oldAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+                let newNetYr = annualNetSalary(annualGross: newAnnual * pow(1.0 + growth, Double(yr - 1)), isSplitting: useSplittingForPayroll, churchRate: input.churchRate, kinderZahl: input.kinderZahl)
+
+                var yearDiff = newNetYr - oldNetYr
+                if yr == 1 && input.switchStartDelayMonths > 0 {
+                    let gap = Double(min(12, input.switchStartDelayMonths))
+                    let gapIncome = isSprinter ? 0 : alg1
+                    yearDiff = ((12.0 - gap) / 12.0) * newNetYr + (gap * gapIncome) - oldNetYr
+                }
+                let prev = delta
+                delta += yearDiff
+                if breakEven == nil && prev >= 0 && delta < 0 {
+                    let frac = prev / max(1, prev - delta)
+                    breakEven = Double(yr - 1) + frac
+                }
+                curve.append(delta)
+            }
+            return (curve, breakEven)
+        }
+
+        let std = simulateSwitch(isSprinter: false)
+        let spr = simulateSwitch(isSprinter: true)
+
+        r.breakEvenYearStandard = std.breakEvenYear
+        r.breakEvenYearSprinter = spr.breakEvenYear
+        r.switchDeltaYear5Std = std.curve[5]
+        r.switchDeltaYear5Spr = spr.curve[5]
+        r.switchDeltaYear10Std = std.curve[10]
+        r.switchDeltaYear10Spr = spr.curve[10]
+
+        var pts: [DualSeriesPoint] = []
+        for y in 0...15 {
+            pts.append(DualSeriesPoint(
+                x: Double(y),
+                label: "Jahr \(y) (\(2027 + y))",
+                standardVal: std.curve[y],
+                sprinterVal: spr.curve[y]
+            ))
+        }
+        r.switchCurve = pts
+    }
+}
+
+// MARK: - Root 5-Tab Navigation Container
+
+struct MainTabContainerView: View {
+    @EnvironmentObject var engine: TaxEngineHost
+    @AppStorage("abfindungs_theme") private var themeMode: String = "dark"
+    @State private var selectedTab: Int = 0
+    @State private var selectedInfoTopic: StatutoryTopic?
+    @State private var pdfShareItem: IdentifiableURL?
+
+    private var resolvedColorScheme: ColorScheme? {
+        switch themeMode {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                InputsTabView(selectedInfoTopic: $selectedInfoTopic)
+                    .navigationTitle("AbfindungsPilot")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { sharedToolbar }
+            }
+            .tabItem { Label("Eingaben", systemImage: "slider.horizontal.3") }
+            .tag(0)
+
+            NavigationStack {
+                TaxOptimizationTabView(selectedInfoTopic: $selectedInfoTopic)
+                    .navigationTitle("Steuer-Hebel")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { sharedToolbar }
+            }
+            .tabItem { Label("Steuer", systemImage: "wand.and.stars") }
+            .tag(1)
+
+            NavigationStack {
+                ResultsTabView(selectedInfoTopic: $selectedInfoTopic, onExportPDF: generatePDFReport)
+                    .navigationTitle("Ergebnis 2027")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { sharedToolbar }
+            }
+            .tabItem { Label("Ergebnis", systemImage: "chart.pie.fill") }
+            .tag(2)
+
+            NavigationStack {
+                ReichweiteTabView(selectedInfoTopic: $selectedInfoTopic)
+                    .navigationTitle("Reichweite")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { sharedToolbar }
+            }
+            .tabItem { Label("Reichweite", systemImage: "hourglass") }
+            .tag(3)
+
+            NavigationStack {
+                JobSwitchTabView(selectedInfoTopic: $selectedInfoTopic)
+                    .navigationTitle("Job-Switch")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar { sharedToolbar }
+            }
+            .tabItem { Label("Switch", systemImage: "arrow.left.arrow.right") }
+            .tag(4)
+        }
+        .preferredColorScheme(resolvedColorScheme)
+        .sheet(item: $selectedInfoTopic) { topic in
+            StatutoryInfoSheetView(topic: topic)
+        }
+        .sheet(item: $pdfShareItem) { item in
+            ShareSheet(items: [item.url])
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var sharedToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button {
+                selectedInfoTopic = .recht2027
+            } label: {
+                Label("Recht 2027", systemImage: "scale.3d")
+                    .font(.caption.weight(.semibold))
+            }
+        }
+        ToolbarItemGroup(placement: .topBarTrailing) {
+            Button {
+                themeMode = (themeMode == "dark") ? "light" : "dark"
+            } label: {
+                Image(systemName: themeMode == "dark" ? "sun.max.fill" : "moon.fill")
+                    .foregroundStyle(themeMode == "dark" ? .yellow : .indigo)
+            }
+            Button {
+                generatePDFReport()
+            } label: {
+                Image(systemName: "doc.richtext")
+            }
+        }
+    }
+
+    private func generatePDFReport() {
+        triggerLightHaptic()
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842))
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_Report.pdf")
+        let inp = engine.input
+        let res = engine.result
+
+        do {
+            try renderer.writePDF(to: url) { ctx in
+                ctx.beginPage()
+                let titleAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.boldSystemFont(ofSize: 18),
+                    .foregroundColor: UIColor.label
+                ]
+                let subAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.boldSystemFont(ofSize: 12),
+                    .foregroundColor: UIColor.systemBlue
+                ]
+                let bodyAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 10.5),
+                    .foregroundColor: UIColor.darkGray
+                ]
+                let footAttrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.italicSystemFont(ofSize: 8.5),
+                    .foregroundColor: UIColor.gray
+                ]
+
+                "AbfindungsPilot 2027 – Executive Summary (v27.1.1)".draw(at: CGPoint(x: 40, y: 36), withAttributes: titleAttrs)
+                "1. Kernergebnisse & Liquidität 2027 → 2028".draw(at: CGPoint(x: 40, y: 70), withAttributes: subAttrs)
+
+                let block1 = """
+                Basis-Abfindung Brutto: \(eur(inp.bruttoAbfindung))  |  Effektiv (inkl. Sprinter): \(eur(res.effectiveAbfindung))
+                2027 Brutto gesamt: \(eur(res.totalGross2027)) (\(res.oldJobMonths2027) Mon. Alt-AG \(eur(res.oldJobGross2027)) + Neu-Job \(eur(inp.neuesGehalt2027)))
+                Tarif: \(inp.isSplitting ? "Splittingtarif" : "Grundtarif")  |  Kinder: \(String(format: "%.1f", inp.kinderZahl))  |  Kirchensteuer: \(pct(inp.churchRate * 100))
+
+                • Sofort-Netto 2027 (nach AG-Einbehalt \(pct(res.upfrontTaxRatePct))): \(eur(res.sofortNetto2027))
+                • Finanzamt-Erstattung Okt. 2028 (§ 34 EStG): \(eur(res.finanzamtRefundOct2028, showPlus: true))
+                • Optimal-Netto Gesamt (Steuersatz \(pct(res.finalTaxRatePct))): \(eur(res.optimalNettoTotal))
+                • Konto-Cash 31.12.2027 (inkl. Netto-Gehalt 2027): \(eur(res.kontoCashEnd2027))
+                • Endgültige Bar-Liquidität Ende 2028: \(eur(res.endLiquidity2028))
+                """
+                block1.draw(in: CGRect(x: 40, y: 92, width: 515, height: 155), withAttributes: bodyAttrs)
+
+                "2. Steuer-Optimierung (§§ 3 Nr. 63, 10, 7g EStG & V0210)".draw(at: CGPoint(x: 40, y: 255), withAttributes: subAttrs)
+                let block2 = """
+                • bAV-Umwandlung: \(eur(res.solvedBav))  →  Sofort-Ersparnis 2027: \(eur(res.bavSavings, showPlus: true)) (\(pct(res.bavSavingsPct)))
+                • Rürup / Basisrente: \(eur(res.solvedRuerup))  →  Steuer-Ersparnis: \(eur(res.ruerupSavings, showPlus: true)) (\(pct(res.ruerupSavingsPct)))
+                • DRV V0210 (AG-Direkt): \(eur(res.solvedDrv))  →  Steuer-Ersparnis: \(eur(res.drvSavings, showPlus: true)) (\(pct(res.drvSavingsPct)))
+                • PV-IAB (50 % Abzug): \(eur(res.solvedPvPurchase))  →  Steuer-Ersparnis: \(eur(res.iabSavings, showPlus: true)) (\(pct(res.iabSavingsPct)))
+                """
+                block2.draw(in: CGRect(x: 40, y: 277, width: 515, height: 95), withAttributes: bodyAttrs)
+
+                "3. Reichweite & Gehalts-Switch Break-Even".draw(at: CGPoint(x: 40, y: 385), withAttributes: subAttrs)
+                let stdBe = res.breakEvenYearStandard.map { String(format: "%.1f J.", $0) } ?? "> 15 J."
+                let sprBe = res.breakEvenYearSprinter.map { String(format: "%.1f J.", $0) } ?? "> 15 J."
+                let block3 = """
+                • Reichweite Standard (Frist): \(String(format: "%.0f", res.standardRunwayMonths)) Mon. (bis \(res.standardDepletionDate))
+                • Reichweite Sprinter (Sofort): \(String(format: "%.0f", res.sprinterRunwayMonths)) Mon. (bis \(res.sprinterDepletionDate))
+                • Gehalts-Switch (\(eur(inp.switchNewAnnualGross))/J.): Standard \(stdBe)  |  Sprinter \(sprBe)
+                """
+                block3.draw(in: CGRect(x: 40, y: 407, width: 515, height: 75), withAttributes: bodyAttrs)
+
+                let disclaimer = "Hinweis (§ 2 StBerG): Unverbindliche mathematische Modellrechnung auf Basis der gesetzlichen Rechengrößen 2027. Keine Steuer- oder Rechtsberatung."
+                disclaimer.draw(in: CGRect(x: 40, y: 780, width: 515, height: 40), withAttributes: footAttrs)
+            }
+            self.pdfShareItem = IdentifiableURL(url: url)
+        } catch {
+            print("PDF export error: \(error)")
+        }
+    }
+}
+
+// MARK: - Sticky Bottom KPI Bar
+
+struct StickyKPIBar: View {
+    @EnvironmentObject var engine: TaxEngineHost
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 8) {
+                kpiCol(title: "Sofort 2027", value: eur(engine.result.sofortNetto2027), color: .orange)
+                Divider().frame(height: 28)
+                kpiCol(title: "FA Okt. 2028", value: eur(engine.result.finanzamtRefundOct2028, showPlus: true), color: .green)
+                Divider().frame(height: 28)
+                kpiCol(title: "Optimal-Netto", value: eur(engine.result.optimalNettoTotal), color: .blue)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+        }
+    }
+
+    private func kpiCol(title: String, value: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.callout.bold())
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+// MARK: - Reusable Compact Slider Row
+
+struct CompactSliderRow: View {
+    let title: String
+    var subtitle: String? = nil
+    var topic: StatutoryTopic? = nil
+    @Binding var selectedInfoTopic: StatutoryTopic?
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    var valueFormatter: (Double) -> String = { eur($0) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 2) {
+                        Text(title)
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                        if let topic {
+                            InfoIconButton(topic: topic, selectedTopic: $selectedInfoTopic)
+                        }
+                    }
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer(minLength: 6)
+                Text(valueFormatter(value))
+                    .font(.subheadline.bold())
+                    .monospacedDigit()
+            }
+            Slider(value: $value, in: range, step: step)
+                .controlSize(.small)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+// MARK: - Tab 1: Eingaben
+
+struct InputsTabView: View {
+    @EnvironmentObject var engine: TaxEngineHost
+    @Binding var selectedInfoTopic: StatutoryTopic?
+
+    private let kinderOptions: [Double] = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+    private let monthNames = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
+
+    var body: some View {
+        Form {
+            Section {
+                HStack(spacing: 6) {
+                    presetBtn("Standard", icon: "doc.text", key: "standard", tint: .blue)
+                    presetBtn("Sprinter", icon: "bolt.fill", key: "sprinter", tint: .orange)
+                    presetBtn("Privatier", icon: "sun.horizon.fill", key: "privatier", tint: .green)
+                    Button {
+                        engine.applyPreset("reset")
+                    } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                            .font(.caption.weight(.bold))
+                            .padding(.vertical, 8)
+                            .padding(.horizontal, 10)
+                            .background(Color.secondary.opacity(0.14))
+                            .foregroundStyle(.secondary)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Zurücksetzen")
+                }
+                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+            } header: {
+                Text("Schnell-Szenarien (ohne PV-IAB)").font(.caption.weight(.semibold))
+            }
+
+            Section {
+                CompactSliderRow(
+                    title: "Abfindung Brutto",
+                    selectedInfoTopic: $selectedInfoTopic,
+                    value: $engine.input.bruttoAbfindung,
+                    range: 10_000...400_000,
+                    step: 5_000
+                )
+
+                CompactSliderRow(
+                    title: "Altes Monatsbrutto",
+                    selectedInfoTopic: $selectedInfoTopic,
+                    value: $engine.input.altesMonatsgehalt,
+                    range: 3_000...20_000,
+                    step: 250
+                )
+
+                HStack {
+                    Text("Austrittsmonat 2027")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Picker("", selection: $engine.input.payoutMonth2027) {
+                        ForEach(1...12, id: \.self) { m in
+                            Text("\(monthNames[m - 1]) 2027").tag(m)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+
+                Stepper(value: $engine.input.fristMonate, in: 1...12) {
+                    HStack {
+                        Text("Kündigungsfrist")
+                            .font(.subheadline.weight(.medium))
+                        Spacer()
+                        Text("\(engine.input.fristMonate) Mon.")
+                            .font(.subheadline.bold())
+                            .monospacedDigit()
+                    }
+                }
+
+                CompactSliderRow(
+                    title: "AG-Fiktivgehalt (LSt)",
+                    topic: .agFiktiv,
+                    selectedInfoTopic: $selectedInfoTopic,
+                    value: $engine.input.agFiktivGehalt,
+                    range: 30_000...200_000,
+                    step: 2_500
+                )
+
+                CompactSliderRow(
+                    title: "Zusätzl. Gehalt 2027 (Neu-Job)",
+                    subtitle: "Nur zusätzliches Brutto aus neuem Job in 2027",
+                    selectedInfoTopic: $selectedInfoTopic,
+                    value: $engine.input.neuesGehalt2027,
+                    range: 0...150_000,
+                    step: 2_500
+                )
+
+                HStack {
+                    Image(systemName: "sum")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                    Text("2027 Brutto gesamt: \(eur(engine.result.oldJobGross2027)) Alt-AG (\(engine.result.oldJobMonths2027) M.) + \(eur(engine.input.neuesGehalt2027)) Neu-Job")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            } header: {
+                Text("A · Basisdaten & 2027 Einkommen").font(.caption.weight(.semibold))
+            }
+
+            Section {
+                HStack {
+                    Text("Steuertarif")
+                        .font(.subheadline.weight(.medium))
+                    InfoIconButton(topic: .tarifSplitting, selectedTopic: $selectedInfoTopic)
+                    Spacer()
+                    Picker("", selection: $engine.input.isSplitting) {
+                        Text("Grundtarif").tag(false)
+                        Text("Splitting").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 175)
+                }
+
+                if engine.input.isSplitting {
+                    CompactSliderRow(
+                        title: "Gehalt Partner/in 2027",
+                        subtitle: engine.result.partnerSplittingBreakEvenMax > 0
+                            ? "Abfindungs-Vorteil bis ca. \(eur(engine.result.partnerSplittingBreakEvenMax))"
+                            : "Kein Abfindungs-Vorteil durch Splitting",
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: $engine.input.partnerGehalt2027,
+                        range: 0...150_000,
+                        step: 2_500
+                    )
+
+                    let adv = engine.result.splittingAdvantageEur
+                    let bannerColor: Color = adv > 1 ? .green : (adv < -1 ? .red : .secondary)
+                    let bannerIcon = adv > 1 ? "checkmark.circle.fill" : (adv < -1 ? "exclamationmark.triangle.fill" : "equal.circle.fill")
+                    let bannerText: String = {
+                        if adv > 1 {
+                            return "Abfindungs-Vorteil: \(eur(adv, showPlus: true)) gegenüber Grundtarif"
+                        } else if adv < -1 {
+                            return "Fünftel-Falle (Abfindung): \(eur(adv)) Nachteil — Grundtarif günstiger"
+                        } else {
+                            return "Neutral (0 €): Kein Splitting-Vorteil auf die Abfindung"
+                        }
+                    }()
+
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: bannerIcon)
+                            .font(.caption)
+                            .foregroundStyle(bannerColor)
+                            .padding(.top, 1)
+                        Text(bannerText)
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(bannerColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(bannerColor.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+
+                HStack {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Kinderfreibeträge")
+                            .font(.subheadline.weight(.medium))
+                        Text("ALG 1: \(Int(engine.input.alg1SatzPct)) % · § 31 Günstigerprüfung")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Picker("", selection: $engine.input.kinderZahl) {
+                        ForEach(kinderOptions, id: \.self) { k in
+                            Text(k == floor(k) ? "\(Int(k))" : String(format: "%.1f", k).replacingOccurrences(of: ".", with: ","))
+                                .tag(k)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+
+                HStack {
+                    Text("Kirchensteuer")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Picker("", selection: $engine.input.churchRate) {
+                        ForEach(ChurchTaxOption.allCases) { opt in
+                            Text(opt.shortLabel).tag(opt.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 215)
+                }
+
+                HStack {
+                    Text("GKV vor Austritt")
+                        .font(.subheadline.weight(.medium))
+                    InfoIconButton(topic: .preExitGkv, selectedTopic: $selectedInfoTopic)
+                    Spacer()
+                    Picker("", selection: $engine.input.preExitGkv) {
+                        ForEach(PreExitGkvStatus.allCases) { status in
+                            Text(status.displayName).tag(status)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                }
+
+                CompactSliderRow(
+                    title: "KV-Zusatzbeitrag",
+                    selectedInfoTopic: $selectedInfoTopic,
+                    value: $engine.input.kvZusatzbeitragPct,
+                    range: 1.0...4.5,
+                    step: 0.1,
+                    valueFormatter: { pct($0) }
+                )
+            } header: {
+                Text("Familie, Kinder & Steuern").font(.caption.weight(.semibold))
+            }
+
+            Section {
+                Toggle(isOn: $engine.input.turboEnabled) {
+                    HStack(spacing: 4) {
+                        Text("Sprinter-Option (Sofort-Austritt)")
+                            .font(.subheadline.weight(.medium))
+                        InfoIconButton(topic: .sprinterLegal, selectedTopic: $selectedInfoTopic)
+                    }
+                }
+                .tint(.orange)
+
+                if engine.input.turboEnabled {
+                    CompactSliderRow(
+                        title: "Sprinter-Faktor",
+                        subtitle: "Bonus: \(eur(engine.result.sprinterBonusGross, showPlus: true))",
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: $engine.input.turboFaktor,
+                        range: 0.5...2.0,
+                        step: 0.1,
+                        valueFormatter: { String(format: "%.1fx", $0) }
+                    )
+
+                    Toggle(isOn: $engine.input.includeAlg1Loss) {
+                        HStack(spacing: 4) {
+                            Text("ALG-1 Sperrzeit abziehen (max. 12 Wo.)")
+                                .font(.subheadline.weight(.medium))
+                            InfoIconButton(topic: .alg1Rules, selectedTopic: $selectedInfoTopic)
+                        }
+                    }
+                }
+            } header: {
+                Text("Vorzeitiger Austritt").font(.caption.weight(.semibold))
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            StickyKPIBar()
+        }
+    }
+
+    private func presetBtn(_ title: String, icon: String, key: String, tint: Color) -> some View {
+        Button {
+            engine.applyPreset(key)
+        } label: {
+            Label(title, systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+                .background(tint.opacity(0.14))
+                .foregroundStyle(tint)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Tab 2: Steuer-Optimierung (2x2 Mode Grid + Reordered Levers)
+
+struct TaxOptimizationTabView: View {
+    @EnvironmentObject var engine: TaxEngineHost
+    @Binding var selectedInfoTopic: StatutoryTopic?
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: Binding(
+                    get: { engine.input.taxOptimizationEnabled },
+                    set: { engine.setTaxOptimizationEnabled($0) }
+                )) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Steuer-Optimierung aktivieren")
+                            .font(.subheadline.weight(.semibold))
+                        Text(engine.input.taxOptimizationEnabled
+                             ? "Hebel aktiv — Deaktivieren setzt alle Werte auf 0 €"
+                             : "Deaktiviert — alle 4 Hebel stehen sicher auf 0 €")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tint(.green)
+            } header: {
+                Text("B · Steuer-Hebel Steuerung").font(.caption.weight(.semibold))
+            }
+
+            if engine.input.taxOptimizationEnabled {
+                Section {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                        ForEach(SolverMode.allCases) { mode in
+                            let isSelected = engine.input.solverMode == mode
+                            Button {
+                                triggerLightHaptic()
+                                engine.input.solverMode = mode
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: mode.icon)
+                                        .font(.caption.weight(.semibold))
+                                    Text(mode.rawValue)
+                                        .font(.caption.weight(.semibold))
+                                        .lineLimit(1)
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 9)
+                                .padding(.horizontal, 8)
+                                .background(isSelected ? mode.tint.opacity(0.20) : Color.secondary.opacity(0.10))
+                                .foregroundStyle(isSelected ? mode.tint : .primary)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(isSelected ? mode.tint : Color.clear, lineWidth: 1.5)
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.vertical, 2)
+
+                    Text(engine.input.solverMode.shortHint)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    HStack(spacing: 4) {
+                        Text("Optimierungs-Modus").font(.caption.weight(.semibold))
+                        InfoIconButton(topic: .solverModes, selectedTopic: $selectedInfoTopic)
+                    }
+                }
+
+                // Lever 1: bAV
+                Section {
+                    CompactSliderRow(
+                        title: "1. bAV-Umwandlung",
+                        subtitle: "Max. \(eur(engine.bavMaxTotal)) → bis zu \(eur(engine.result.bavMaxCapSavings, showPlus: true)) (\(pct(engine.result.bavMaxCapPct)))",
+                        topic: .bav63,
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: Binding(
+                            get: { engine.result.solvedBav },
+                            set: { val in engine.updateManualLever { $0.bavAmount = val } }
+                        ),
+                        range: 0...engine.bavMaxTotal,
+                        step: 1_000
+                    )
+
+                    if engine.result.solvedBav > 0 {
+                        savingsPill(
+                            label: "Sofort-Ersparnis (2027 LSt)",
+                            amount: engine.result.bavSavings,
+                            percent: engine.result.bavSavingsPct,
+                            color: .blue
+                        )
+                    }
+                }
+
+                // Lever 2: Rürup / Basisrente
+                Section {
+                    CompactSliderRow(
+                        title: "2. Rürup / Basisrente",
+                        subtitle: "Frei: \(eur(engine.result.ruerupCapRemaining)) von \(eur(engine.result.ruerupMaxCap))",
+                        topic: .ruerup10,
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: Binding(
+                            get: { engine.result.solvedRuerup },
+                            set: { val in engine.updateManualLever { $0.ruerupAmount = val } }
+                        ),
+                        range: 0...max(1_000, engine.result.ruerupMaxCap),
+                        step: 500
+                    )
+
+                    HStack(spacing: 6) {
+                        Text("⚠️ Kapital dauerhaft gebunden")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        if engine.result.solvedRuerup > 0 {
+                            Text("\(eur(engine.result.ruerupSavings, showPlus: true)) (\(pct(engine.result.ruerupSavingsPct)))")
+                                .font(.caption.bold())
+                                .monospacedDigit()
+                                .foregroundStyle(.green)
+                        }
+                    }
+
+                    Button {
+                        engine.applyRuerupSweetSpot()
+                    } label: {
+                        HStack {
+                            Image(systemName: "target")
+                            Text("Rürup Cash-Plus Sweet-Spot (\(eur(engine.result.ruerupSweetSpot)))")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+
+                // Lever 3: DRV-Ausgleich (V0210)
+                Section {
+                    CompactSliderRow(
+                        title: "3. DRV-Ausgleich (V0210)",
+                        subtitle: "50 % steuerfrei (§ 3 Nr. 28) · 50 % Fünftel",
+                        topic: .drvV0210,
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: Binding(
+                            get: { engine.result.solvedDrv },
+                            set: { val in engine.updateManualLever { $0.drvV0210Amount = val } }
+                        ),
+                        range: 0...60_000,
+                        step: 1_000
+                    )
+
+                    if engine.result.solvedDrv > 0 {
+                        savingsPill(
+                            label: "Steuer-Ersparnis DRV",
+                            amount: engine.result.drvSavings,
+                            percent: engine.result.drvSavingsPct,
+                            color: .teal
+                        )
+                    }
+                }
+
+                // Lever 4: PV-Investition (50% IAB)
+                Section {
+                    CompactSliderRow(
+                        title: "4. PV-Investition (50 % IAB)",
+                        subtitle: "Abzug 2027: \(eur(engine.result.solvedPvPurchase * 0.5)) · 0 € Cash 2027",
+                        topic: .pvIab7g,
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: Binding(
+                            get: { engine.result.solvedPvPurchase },
+                            set: { val in engine.updateManualLever { $0.pvIabPurchase = val } }
+                        ),
+                        range: 0...engine.pvIabMaxPurchase,
+                        step: 5_000
+                    )
+
+                    if engine.result.solvedPvPurchase > 0 {
+                        savingsPill(
+                            label: "FA-Ersparnis PV-IAB",
+                            amount: engine.result.iabSavings,
+                            percent: engine.result.iabSavingsPct,
+                            color: .green
+                        )
+                    }
+
+                    Button {
+                        engine.applyIabSweetSpot()
+                    } label: {
+                        HStack {
+                            Image(systemName: "target")
+                            Text("IAB Sweet-Spot anwenden (zvE → 0 €)")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            StickyKPIBar()
+        }
+    }
+
+    private func savingsPill(label: String, amount: Double, percent: Double, color: Color) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(color)
+            Spacer()
+            Text("\(eur(amount, showPlus: true)) (\(pct(percent)))")
+                .font(.caption.bold())
+                .monospacedDigit()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(color.opacity(0.14))
+                .foregroundStyle(color)
+                .clipShape(Capsule())
+        }
+    }
+}
+
+// MARK: - Tab 3: Ergebnis (KPIs, Floating Waterfall & 3 Collapsible HTML-Parity Tables)
+
+struct ResultsTabView: View {
+    @EnvironmentObject var engine: TaxEngineHost
+    @Binding var selectedInfoTopic: StatutoryTopic?
+    let onExportPDF: () -> Void
+
+    @State private var showTable1 = true
+    @State private var showTable2 = true
+    @State private var showTable3 = true
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    kpiCard("Sofort-Netto 2027", value: eur(engine.result.sofortNetto2027), subtitle: "nach AG-Einbehalt", color: .orange)
+                    kpiCard("FA-Erstattung Okt. 28", value: eur(engine.result.finanzamtRefundOct2028, showPlus: true), subtitle: "§ 34 Fünftelregelung", color: .green)
+                    kpiCard("Optimal-Netto Gesamt", value: eur(engine.result.optimalNettoTotal), subtitle: "Steuerlast: \(eur(engine.result.totalTaxFinal))", color: .blue)
+                    kpiCard("Bar-Liquidität Ende 28", value: eur(engine.result.endLiquidity2028), subtitle: "inkl. Netto-Gehalt 27", color: .purple)
+                }
+
+                if engine.input.taxOptimizationEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("STEUER-HEBEL ERSPARNIS")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                            leverMiniCard("bAV (Sofort 2027)", amount: engine.result.bavSavings, pctVal: engine.result.bavSavingsPct, color: .blue)
+                            leverMiniCard("Rürup (§ 10)", amount: engine.result.ruerupSavings, pctVal: engine.result.ruerupSavingsPct, color: .indigo)
+                            leverMiniCard("DRV V0210", amount: engine.result.drvSavings, pctVal: engine.result.drvSavingsPct, color: .teal)
+                            leverMiniCard("PV-IAB (§ 7g)", amount: engine.result.iabSavings, pctVal: engine.result.iabSavingsPct, color: .green)
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Abfindung: Brutto → Netto 2027/2028")
+                            .font(.subheadline.weight(.semibold))
+                        InfoIconButton(topic: .liquidityTimeline, selectedTopic: $selectedInfoTopic)
+                    }
+                    Chart {
+                        BarMark(x: .value("Stufe", "Brutto"), y: .value("€", engine.result.effectiveAbfindung))
+                            .foregroundStyle(.gray.opacity(0.6))
+                        BarMark(x: .value("Stufe", "Sofort 27"), y: .value("€", engine.result.sofortNetto2027))
+                            .foregroundStyle(.orange)
+                        BarMark(x: .value("Stufe", "FA Okt. 28"), y: .value("€", max(0, engine.result.finanzamtRefundOct2028)))
+                            .foregroundStyle(.green)
+                        BarMark(x: .value("Stufe", "Optimal"), y: .value("€", engine.result.optimalNettoTotal))
+                            .foregroundStyle(.blue)
+                    }
+                    .frame(height: 175)
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                if engine.input.turboEnabled {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Sprinter Netto-Brücke (Wasserfall)")
+                                .font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(eur(engine.result.sprinterNetGain, showPlus: true))
+                                .font(.subheadline.bold())
+                                .monospacedDigit()
+                                .foregroundStyle(engine.result.sprinterNetGain >= 0 ? .green : .red)
+                        }
+                        Chart(engine.result.waterfallSteps) { step in
+                            BarMark(
+                                xStart: .value("Start", step.start),
+                                xEnd: .value("Ende", step.end),
+                                y: .value("Position", step.label)
+                            )
+                            .foregroundStyle(
+                                step.isTotal
+                                    ? (step.delta >= 0 ? Color.blue : Color.red)
+                                    : (step.delta >= 0 ? Color.green : Color.orange)
+                            )
+                            .cornerRadius(4)
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .automatic(desiredCount: 4))
+                        }
+                        .frame(height: 225)
+                    }
+                    .padding(12)
+                    .background(Color(.secondarySystemGroupedBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+
+                tableCard(
+                    title: "1. Sofort-Abrechnung AG (2027)",
+                    badge: eur(engine.result.sofortNetto2027),
+                    badgeColor: .orange,
+                    isExpanded: $showTable1
+                ) {
+                    tableRow("Basis-Abfindung Brutto", eur(engine.input.bruttoAbfindung))
+                    if engine.input.turboEnabled {
+                        tableRow("+ Sprinter-Prämie Brutto", eur(engine.result.sprinterBonusGross, showPlus: true), valueColor: .green)
+                        tableRow("= Effektive Abfindung Brutto", eur(engine.result.effectiveAbfindung), bold: true)
+                    }
+                    if engine.result.solvedBav > 0 {
+                        tableRow("− bAV-Umwandlung (§ 3 Nr. 63)", eur(-engine.result.solvedBav), valueColor: .blue)
+                    }
+                    if engine.result.solvedDrv > 0 {
+                        tableRow("− DRV-Direktzahlung (V0210)", eur(-engine.result.solvedDrv), valueColor: .teal)
+                    }
+                    tableRow("= Bar-Brutto vor Steuer", eur(engine.result.barBruttoVorSteuer), bold: true)
+                    tableRow("− AG Lohnsteuer-Einbehalt (\(pct(engine.result.upfrontTaxRatePct)))", eur(-engine.result.upfrontPayrollTax), valueColor: .red)
+                    Divider()
+                    tableRow("= Sofort-Netto 2027", eur(engine.result.sofortNetto2027), valueColor: .orange, bold: true)
+                }
+
+                tableCard(
+                    title: "2. Endabrechnung Finanzamt (2028)",
+                    badge: eur(engine.result.optimalNettoTotal),
+                    badgeColor: .blue,
+                    isExpanded: $showTable2
+                ) {
+                    tableRow("Effektive Abfindung Brutto", eur(engine.result.effectiveAbfindung))
+                    tableRow("2027 Brutto (Alt-AG + Neu-Job)", eur(engine.result.totalGross2027))
+                    if engine.result.totalTaxFinal >= 0 {
+                        tableRow("− Endgültige Steuer (§ 34 · \(pct(engine.result.finalTaxRatePct)))", eur(-engine.result.totalTaxFinal), valueColor: .red)
+                    } else {
+                        tableRow("+ Steuer-Gutschrift (inkl. LSt-Erstattung)", eur(-engine.result.totalTaxFinal, showPlus: true), valueColor: .green)
+                    }
+                    if engine.input.kinderZahl > 0 {
+                        tableRow(
+                            "Kinder-Vorteil (\(engine.result.kinderFreibetragWon ? "KFB gewinnt" : "KiG + Soli/KiSt"))",
+                            eur(engine.result.kinderBenefitNet, showPlus: true),
+                            valueColor: .green
+                        )
+                    }
+                    if engine.input.churchRate > 0 {
+                        tableRow("Kirchensteuer-Satz berücksichtigt", pct(engine.input.churchRate * 100))
+                    }
+                    Divider()
+                    tableRow("= Optimal-Netto Gesamt", eur(engine.result.optimalNettoTotal), valueColor: .blue, bold: true)
+                    tableRow("+ FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: engine.result.finanzamtRefundOct2028 >= 0 ? .green : .red, bold: true)
+                }
+
+                tableCard(
+                    title: "3. Harter Liquiditäts-Zeitstrahl",
+                    badge: eur(engine.result.endLiquidity2028),
+                    badgeColor: .purple,
+                    isExpanded: $showTable3
+                ) {
+                    tableRow("Cash-In: Sofort-Netto Abfindung", eur(engine.result.sofortNetto2027), bold: true)
+                    tableRow("+ Cash-In: Netto-Gehalt 2027", eur(engine.result.netSalary2027, showPlus: true), valueColor: .green)
+                    if engine.result.solvedRuerup > 0 {
+                        tableRow("− Cash-Out: Rürup-Einzahlung", eur(-engine.result.solvedRuerup), valueColor: .indigo)
+                    }
+                    if engine.result.solvedPvPurchase > 0 {
+                        tableRow("Info: PV-IAB (3 J. Frist · 0 € Cash 2027)", "0 €", valueColor: .secondary)
+                    }
+                    if engine.result.ruhensGkvTotal > 0 {
+                        tableRow("− Cash-Out: Freiwillige GKV (Ruhenszeit)", eur(-engine.result.ruhensGkvTotal), valueColor: .red)
+                    }
+                    Divider()
+                    tableRow("= KONTO-CASH am 31.12.2027", eur(engine.result.kontoCashEnd2027), bold: true)
+                    tableRow("+ Cash-In: FA-Erstattung Okt. 2028", eur(engine.result.finanzamtRefundOct2028, showPlus: true), valueColor: engine.result.finanzamtRefundOct2028 >= 0 ? .green : .red)
+                    Divider()
+                    tableRow("= BAR-LIQUIDITÄT Ende 2028", eur(engine.result.endLiquidity2028), valueColor: .purple, bold: true)
+                }
+
+                Button(action: onExportPDF) {
+                    Label("A4 PDF-Report teilen", systemImage: "square.and.arrow.up")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private func tableCard<Content: View>(
+        title: String,
+        badge: String,
+        badgeColor: Color,
+        isExpanded: Binding<Bool>,
+        @ViewBuilder content: @escaping () -> Content
+    ) -> some View {
+        DisclosureGroup(isExpanded: isExpanded) {
+            VStack(spacing: 7) {
+                Divider().padding(.top, 4)
+                content()
+            }
+            .padding(.top, 2)
+        } label: {
+            HStack {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text(badge)
+                    .font(.caption.bold())
+                    .monospacedDigit()
+                    .foregroundStyle(badgeColor)
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func tableRow(_ left: String, _ right: String, valueColor: Color = .primary, bold: Bool = false) -> some View {
+        HStack {
+            Text(left)
+                .font(bold ? .caption.weight(.semibold) : .caption)
+                .foregroundStyle(bold ? .primary : .secondary)
+            Spacer()
+            Text(right)
+                .font(bold ? .caption.bold() : .caption.weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(valueColor)
+        }
+    }
+
+    private func kpiCard(_ title: String, value: String, subtitle: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Text(value)
+                .font(.headline.bold())
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func leverMiniCard(_ title: String, amount: Double, pctVal: Double, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+            Text(eur(amount, showPlus: true))
+                .font(.subheadline.bold())
+                .monospacedDigit()
+                .foregroundStyle(amount > 0 ? color : .secondary)
+            Text(amount > 0 ? pct(pctVal) : "0,0 %")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(color.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+// MARK: - Tab 4: Reichweite
+
+struct ReichweiteTabView: View {
+    @EnvironmentObject var engine: TaxEngineHost
+    @Binding var selectedInfoTopic: StatutoryTopic?
+
+    private var phaseMaxX: Double {
+        let m = max(engine.result.standardRunwayMonths, engine.result.sprinterRunwayMonths, engine.result.faRefundMonthIndex)
+        return max(18, m * 1.28)
+    }
+
+    private var winnerPill: (text: String, color: Color) {
+        let diff = Int((engine.result.sprinterRunwayMonths - engine.result.standardRunwayMonths).rounded())
+        if diff > 0 { return ("Sprinter +\(diff) Mon.", .green) }
+        if diff < 0 { return ("Standard +\(abs(diff)) Mon.", .orange) }
+        return ("Gleichstand", .secondary)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("PARAMETER · ÜBERLEBEN OHNE JOB")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    CompactSliderRow(
+                        title: "Monatl. Netto-Ausgaben",
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: $engine.input.monthlyExpenses,
+                        range: 1_500...8_000,
+                        step: 100
+                    )
+
+                    CompactSliderRow(
+                        title: "Einmal-Abfluss 2027 (Kredit/Puffer)",
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: $engine.input.upfrontSpend2027,
+                        range: 0...80_000,
+                        step: 1_000
+                    )
+
+                    Stepper(value: $engine.input.alg1ClaimMonths, in: 6...24, step: 3) {
+                        HStack {
+                            Text("ALG-1 Anspruch (\(Int(engine.input.alg1SatzPct)) %)")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            Text("\(engine.input.alg1ClaimMonths) Mon.")
+                                .font(.subheadline.bold())
+                                .monospacedDigit()
+                        }
+                    }
+
+                    HStack {
+                        Text("GKV nach ALG 1")
+                            .font(.subheadline.weight(.medium))
+                        InfoIconButton(topic: .postAlg1Gkv, selectedTopic: $selectedInfoTopic)
+                        Spacer()
+                        Picker("", selection: $engine.input.postAlg1GkvMode) {
+                            ForEach(PostAlg1GkvMode.allCases) { m in
+                                Text(m.displayName).tag(m)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                    }
+
+                    if engine.input.postAlg1GkvMode == .individuell {
+                        CompactSliderRow(
+                            title: "Eigene GKV/PV nach ALG 1",
+                            selectedInfoTopic: $selectedInfoTopic,
+                            value: $engine.input.customPostGkvMonthly,
+                            range: 0...1_400,
+                            step: 20,
+                            valueFormatter: { "\(eur($0))/Mo" }
+                        )
+                    }
+
+                    CompactSliderRow(
+                        title: "Real-Zins / Inflation p.a.",
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: $engine.input.realReturnPct,
+                        range: -3.0...6.0,
+                        step: 0.5,
+                        valueFormatter: { pct($0) }
+                    )
+
+                    Toggle("Gehalts-Überschuss in Frist sparen", isOn: $engine.input.includeSalarySurplus)
+                        .font(.subheadline.weight(.medium))
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                HStack(spacing: 10) {
+                    runwayKpi("Standard (Frist)", months: engine.result.standardRunwayMonths, date: engine.result.standardDepletionDate, color: .orange)
+                    runwayKpi("Sprinter (Sofort)", months: engine.result.sprinterRunwayMonths, date: engine.result.sprinterDepletionDate, color: .green)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Lebensphasen-Zeitstrahl")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(winnerPill.text)
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(winnerPill.color.opacity(0.15))
+                            .foregroundStyle(winnerPill.color)
+                            .clipShape(Capsule())
+                    }
+
+                    Chart {
+                        ForEach(engine.result.runwayPhaseBars) { bar in
+                            BarMark(
+                                xStart: .value("Start", bar.startMonth),
+                                xEnd: .value("Ende", bar.endMonth),
+                                y: .value("Strategie", bar.strategy)
+                            )
+                            .foregroundStyle(by: .value("Phase", bar.phase))
+                            .cornerRadius(4)
+                            .annotation(position: .overlay) {
+                                if bar.duration >= max(5, phaseMaxX * 0.12) {
+                                    Text("\(Int(bar.duration))M")
+                                        .font(.system(size: 9, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .fixedSize()
+                                }
+                            }
+                            .annotation(position: .trailing, spacing: 4) {
+                                if bar.isLast {
+                                    Text(bar.endDateLabel)
+                                        .font(.caption2.bold())
+                                        .monospacedDigit()
+                                        .foregroundStyle(bar.strategy == "Sprinter" ? .green : .orange)
+                                        .fixedSize()
+                                }
+                            }
+                        }
+
+                        RuleMark(x: .value("FA Okt. 28", engine.result.faRefundMonthIndex))
+                            .foregroundStyle(Color.purple.opacity(0.8))
+                            .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                            .annotation(position: .top, alignment: .center, spacing: 4) {
+                                Text("FA Okt. 28")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.purple)
+                                    .fixedSize()
+                            }
+                    }
+                    .chartXScale(domain: 0...phaseMaxX)
+                    .chartForegroundStyleScale([
+                        "Gehalt/Frist": Color.blue,
+                        "Ruhenszeit": Color.orange,
+                        "ALG 1": Color.cyan,
+                        "Privatier": Color.green
+                    ])
+                    .padding(.top, 14)
+                    .frame(height: 155)
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                ReichweiteAreaChartCard(
+                    points: engine.result.runwayCurve,
+                    faMarkerX: engine.result.faRefundMonthIndex,
+                    stdDepleteX: engine.result.standardRunwayMonths < 72 ? engine.result.standardRunwayMonths : nil,
+                    sprDepleteX: engine.result.sprinterRunwayMonths < 72 ? engine.result.sprinterRunwayMonths : nil
+                )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("MEILENSTEINE")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    milestoneRow("ALG 1 endet", std: engine.result.standardAlg1EndDate, spr: engine.result.sprinterAlg1EndDate)
+                    milestoneRow("Geld aufgebraucht", std: engine.result.standardDepletionDate, spr: engine.result.sprinterDepletionDate)
+                    milestoneRow("Okt. 2028 Brücke", std: engine.result.standardBridgeSafe ? "Sicher" : "Engpass", spr: engine.result.sprinterBridgeSafe ? "Sicher" : "Engpass")
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private func runwayKpi(_ title: String, months: Double, date: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            Text(months >= 72 ? "> 72 Mon." : "\(Int(months)) Mon.")
+                .font(.title3.bold())
+                .monospacedDigit()
+                .foregroundStyle(color)
+            Text("bis \(date)").font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func milestoneRow(_ label: String, std: String, spr: String) -> some View {
+        HStack {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Text("Std: \(std)").font(.caption.bold()).foregroundStyle(.orange)
+            Text("·").foregroundStyle(.secondary)
+            Text("Spr: \(spr)").font(.caption.bold()).foregroundStyle(.green)
+        }
+    }
+}
+
+// MARK: - Tab 5: Job-Switch
+
+struct JobSwitchTabView: View {
+    @EnvironmentObject var engine: TaxEngineHost
+    @Binding var selectedInfoTopic: StatutoryTopic?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 14) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("PARAMETER · GEHALTS-SWITCH")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    CompactSliderRow(
+                        title: "Neues Jahresbrutto",
+                        subtitle: "Alt: \(eur(engine.input.altesMonatsgehalt * 12)) / Jahr",
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: $engine.input.switchNewAnnualGross,
+                        range: 25_000...160_000,
+                        step: 2_500
+                    )
+
+                    Stepper(value: $engine.input.switchStartDelayMonths, in: 0...12) {
+                        HStack {
+                            Text("Pause bis Neustart")
+                                .font(.subheadline.weight(.medium))
+                            Spacer()
+                            Text("\(engine.input.switchStartDelayMonths) Mon.")
+                                .font(.subheadline.bold())
+                                .monospacedDigit()
+                        }
+                    }
+
+                    CompactSliderRow(
+                        title: "Gehaltswachstum p.a. (symmetrisch)",
+                        selectedInfoTopic: $selectedInfoTopic,
+                        value: $engine.input.switchAnnualGrowthPct,
+                        range: 0.0...6.0,
+                        step: 0.5,
+                        valueFormatter: { pct($0) }
+                    )
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                HStack(spacing: 10) {
+                    beCard("Standard Break-Even", year: engine.result.breakEvenYearStandard, color: .orange)
+                    beCard("Sprinter Break-Even", year: engine.result.breakEvenYearSprinter, color: .green)
+                }
+
+                SwitchAreaChartCard(
+                    points: engine.result.switchCurve,
+                    stdCrossX: engine.result.breakEvenYearStandard,
+                    sprCrossX: engine.result.breakEvenYearSprinter
+                )
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("VERGLEICH NACH JAHREN")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    switchRow("Nach 5 Jahren", std: engine.result.switchDeltaYear5Std, spr: engine.result.switchDeltaYear5Spr)
+                    switchRow("Nach 10 Jahren", std: engine.result.switchDeltaYear10Std, spr: engine.result.switchDeltaYear10Spr)
+                }
+                .padding(12)
+                .background(Color(.secondarySystemGroupedBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    private func beCard(_ title: String, year: Double?, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            Text(year.map { String(format: "%.1f Jahre", $0).replacingOccurrences(of: ".", with: ",") } ?? "> 15 Jahre")
+                .font(.title3.bold())
+                .monospacedDigit()
+                .foregroundStyle(color)
+            Text(year == nil ? "Dauerhaft im Plus" : "0 € Schwelle erreicht")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func switchRow(_ label: String, std: Double, spr: Double) -> some View {
+        HStack {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Text("Std: \(eur(std, showPlus: true))").font(.caption.bold()).monospacedDigit().foregroundStyle(.orange)
+            Text("·").foregroundStyle(.secondary)
+            Text("Spr: \(eur(spr, showPlus: true))").font(.caption.bold()).monospacedDigit().foregroundStyle(.green)
+        }
+    }
+}
+
+// MARK: - Tailored Reichweite Area Chart
+
+struct ReichweiteAreaChartCard: View {
+    let points: [DualSeriesPoint]
+    let faMarkerX: Double
+    let stdDepleteX: Double?
+    let sprDepleteX: Double?
+
+    @State private var filter: ChartStrategyFilter = .both
+    @State private var selectedX: Double?
+
+    private var activePoint: DualSeriesPoint? {
+        guard let selectedX else { return nil }
+        return points.min(by: { abs($0.x - selectedX) < abs($1.x - selectedX) })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Konto-Verlauf (€)")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("", selection: $filter) {
+                    ForEach(ChartStrategyFilter.allCases) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 195)
+            }
+
+            if let pt = activePoint {
+                HStack(spacing: 8) {
+                    Text(pt.label).font(.caption2.bold())
+                    Spacer()
+                    if filter != .sprinter {
+                        Text("Std: \(eur(pt.standardVal))").font(.caption2.bold()).foregroundStyle(.orange)
+                    }
+                    if filter != .standard {
+                        Text("Spr: \(eur(pt.sprinterVal))").font(.caption2.bold()).foregroundStyle(.green)
+                    }
+                }
+                .monospacedDigit()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Text("Tippen & ziehen für Monatswerte")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Chart {
+                if filter == .both {
+                    ForEach(points) { pt in
+                        AreaMark(
+                            x: .value("Monat", pt.x),
+                            yStart: .value("Basis", 0),
+                            yEnd: .value("Gemeinsam", pt.sharedPositive)
+                        )
+                        .foregroundStyle(by: .value("Bereich", "Gemeinsam"))
+                    }
+                    ForEach(points) { pt in
+                        AreaMark(
+                            x: .value("Monat", pt.x),
+                            yStart: .value("SprLow", pt.sprinterAheadLow),
+                            yEnd: .value("SprHigh", pt.sprinterAheadHigh)
+                        )
+                        .foregroundStyle(by: .value("Bereich", "Sprinter vorn"))
+                    }
+                    ForEach(points) { pt in
+                        AreaMark(
+                            x: .value("Monat", pt.x),
+                            yStart: .value("StdLow", pt.standardAheadLow),
+                            yEnd: .value("StdHigh", pt.standardAheadHigh)
+                        )
+                        .foregroundStyle(by: .value("Bereich", "Standard vorn"))
+                    }
+                } else if filter == .standard {
+                    ForEach(points) { pt in
+                        AreaMark(x: .value("Monat", pt.x), y: .value("Standard", pt.standardVal))
+                            .foregroundStyle(by: .value("Bereich", "Standard vorn"))
+                    }
+                } else {
+                    ForEach(points) { pt in
+                        AreaMark(x: .value("Monat", pt.x), y: .value("Sprinter", pt.sprinterVal))
+                            .foregroundStyle(by: .value("Bereich", "Sprinter vorn"))
+                    }
+                }
+
+                if filter != .sprinter {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Monat", pt.x),
+                            y: .value("Standard", pt.standardVal),
+                            series: .value("Linie", "Standard")
+                        )
+                        .foregroundStyle(Color.orange)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+                if filter != .standard {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Monat", pt.x),
+                            y: .value("Sprinter", pt.sprinterVal),
+                            series: .value("Linie", "Sprinter")
+                        )
+                        .foregroundStyle(Color.green)
+                        .lineStyle(StrokeStyle(lineWidth: 2))
+                    }
+                }
+
+                RuleMark(x: .value("FA Okt. 28", faMarkerX))
+                    .foregroundStyle(Color.purple.opacity(0.8))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+                    .annotation(position: .top, alignment: .center, spacing: 4) {
+                        Text("FA Okt. 28")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.purple)
+                            .fixedSize()
+                    }
+
+                if let pt = activePoint {
+                    RuleMark(x: .value("Auswahl", pt.x))
+                        .foregroundStyle(Color.primary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
+
+                if filter != .sprinter, let stdX = stdDepleteX {
+                    PointMark(x: .value("Monat", stdX), y: .value("Null", 0))
+                        .foregroundStyle(Color.orange)
+                        .symbolSize(50)
+                }
+                if filter != .standard, let sprX = sprDepleteX {
+                    PointMark(x: .value("Monat", sprX), y: .value("Null", 0))
+                        .foregroundStyle(Color.green)
+                        .symbolSize(50)
+                }
+            }
+            .chartForegroundStyleScale([
+                "Gemeinsam": LinearGradient(
+                    colors: [Color.blue.opacity(0.35), Color.blue.opacity(0.04)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                "Sprinter vorn": LinearGradient(
+                    colors: [Color.green.opacity(0.38), Color.green.opacity(0.10)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                "Standard vorn": LinearGradient(
+                    colors: [Color.orange.opacity(0.38), Color.orange.opacity(0.10)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            ])
+            .chartLegend(.hidden)
+            .chartXSelection(value: $selectedX)
+            .padding(.top, 14)
+            .frame(height: 235)
+
+            HStack(spacing: 12) {
+                legendDot("Gemeinsam", color: .blue)
+                legendDot("Sprinter vorn", color: .green)
+                legendDot("Standard vorn", color: .orange)
+                legendDot("FA Okt. 28", color: .purple)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func legendDot(_ text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(text)
+        }
+    }
+}
+
+// MARK: - Tailored Job-Switch Area Chart
+
+struct SwitchAreaChartCard: View {
+    let points: [DualSeriesPoint]
+    let stdCrossX: Double?
+    let sprCrossX: Double?
+
+    @State private var filter: ChartStrategyFilter = .both
+    @State private var selectedX: Double?
+
+    private var activePoint: DualSeriesPoint? {
+        guard let selectedX else { return nil }
+        return points.min(by: { abs($0.x - selectedX) < abs($1.x - selectedX) })
+    }
+
+    private func positiveTop(_ pt: DualSeriesPoint) -> Double {
+        switch filter {
+        case .both: return max(0, max(pt.standardVal, pt.sprinterVal))
+        case .standard: return max(0, pt.standardVal)
+        case .sprinter: return max(0, pt.sprinterVal)
+        }
+    }
+
+    private func negativeBottom(_ pt: DualSeriesPoint) -> Double {
+        switch filter {
+        case .both: return min(0, min(pt.standardVal, pt.sprinterVal))
+        case .standard: return min(0, pt.standardVal)
+        case .sprinter: return min(0, pt.sprinterVal)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Vermögens-Vorsprung (€)")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Picker("", selection: $filter) {
+                    ForEach(ChartStrategyFilter.allCases) { f in
+                        Text(f.rawValue).tag(f)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 195)
+            }
+
+            if let pt = activePoint {
+                HStack(spacing: 8) {
+                    Text(pt.label).font(.caption2.bold())
+                    Spacer()
+                    if filter != .sprinter {
+                        Text("Std: \(eur(pt.standardVal, showPlus: true))").font(.caption2.bold()).foregroundStyle(.orange)
+                    }
+                    if filter != .standard {
+                        Text("Spr: \(eur(pt.sprinterVal, showPlus: true))").font(.caption2.bold()).foregroundStyle(.green)
+                    }
+                }
+                .monospacedDigit()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Text("Tippen & ziehen für Jahreswerte")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Chart {
+                ForEach(points) { pt in
+                    AreaMark(
+                        x: .value("Jahr", pt.x),
+                        yStart: .value("Null", 0),
+                        yEnd: .value("Plus", positiveTop(pt))
+                    )
+                    .foregroundStyle(by: .value("Zone", "Plus"))
+                }
+                ForEach(points) { pt in
+                    AreaMark(
+                        x: .value("Jahr", pt.x),
+                        yStart: .value("Minus", negativeBottom(pt)),
+                        yEnd: .value("Null", 0)
+                    )
+                    .foregroundStyle(by: .value("Zone", "Minus"))
+                }
+
+                if filter != .sprinter {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Jahr", pt.x),
+                            y: .value("Standard", pt.standardVal),
+                            series: .value("Linie", "Standard")
+                        )
+                        .foregroundStyle(Color.orange)
+                        .lineStyle(StrokeStyle(lineWidth: 2.2))
+                    }
+                }
+                if filter != .standard {
+                    ForEach(points) { pt in
+                        LineMark(
+                            x: .value("Jahr", pt.x),
+                            y: .value("Sprinter", pt.sprinterVal),
+                            series: .value("Linie", "Sprinter")
+                        )
+                        .foregroundStyle(Color.green)
+                        .lineStyle(StrokeStyle(lineWidth: 2.2))
+                    }
+                }
+
+                RuleMark(y: .value("Break-Even", 0))
+                    .foregroundStyle(Color.red.opacity(0.75))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+
+                RuleMark(x: .value("FA Okt. 28", 2.0))
+                    .foregroundStyle(Color.purple.opacity(0.75))
+                    .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 4]))
+
+                if let pt = activePoint {
+                    RuleMark(x: .value("Auswahl", pt.x))
+                        .foregroundStyle(Color.primary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1))
+                }
+
+                if filter != .sprinter, let stdX = stdCrossX {
+                    PointMark(x: .value("Jahr", stdX), y: .value("Null", 0))
+                        .foregroundStyle(Color.orange)
+                        .symbolSize(55)
+                }
+                if filter != .standard, let sprX = sprCrossX {
+                    PointMark(x: .value("Jahr", sprX), y: .value("Null", 0))
+                        .foregroundStyle(Color.green)
+                        .symbolSize(55)
+                }
+            }
+            .chartForegroundStyleScale([
+                "Plus": LinearGradient(
+                    colors: [Color.teal.opacity(0.32), Color.teal.opacity(0.05)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                ),
+                "Minus": LinearGradient(
+                    colors: [Color.red.opacity(0.08), Color.red.opacity(0.32)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            ])
+            .chartLegend(.hidden)
+            .chartXSelection(value: $selectedX)
+            .frame(height: 225)
+
+            HStack(spacing: 12) {
+                legendDot("Im Plus", color: .teal)
+                legendDot("Im Minus", color: .red)
+                legendDot("Standard", color: .orange)
+                legendDot("Sprinter", color: .green)
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func legendDot(_ text: String, color: Color) -> some View {
+        HStack(spacing: 4) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(text)
+        }
+    }
+}
+
+// MARK: - Native UIKit Share Sheet
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
