@@ -544,7 +544,6 @@ final class TaxEngineHost: ObservableObject {
         return (estEffective + soli + church, estEffective, soli, church, max(0, kinderNetGain), kfbWon)
     }
 
-    // Steuerklasse III (Splitting withholding) only when sole earner (partner == 0); otherwise StKl I/IV (Grundtarif)
     private var useSplittingForPayroll: Bool {
         input.isSplitting && input.partnerGehalt2027 <= 0
     }
@@ -617,6 +616,7 @@ final class TaxEngineHost: ObservableObject {
         return sprinter ? preExit : min(12, preExit + inp.fristMonate)
     }
 
+    /// Month-by-month 2027 (`1...12`) timeline for Alt-AG, Ruhenszeit, Sperrzeit (~3M), ALG-1 (§ 32b), and Neu-Job.
     private func compute2027Timeline(for inp: SimulationInput, sprinter: Bool) -> (
         oldMonths: Int,
         oldGross: Double,
@@ -639,24 +639,26 @@ final class TaxEngineHost: ObservableObject {
             newGross = max(0, inp.neuesGehalt2027)
         }
 
-        // Unpaid / Ruhenszeit gap months in 2027 after old job ends and before new job starts
-        let endOldMonth = min(13, oldMonths + 1) // 1-based month index of first non-salary month (1..13)
-        let endGapMonth = hasNewJob ? min(13, inp.newJobStartMonth2027) : 13
-        let gapMonths = max(0, endGapMonth - endOldMonth)
+        let ruhensDuration = sprinter ? inp.fristMonate : 0
+        let sperrDuration = (sprinter && inp.includeAlg1Loss) ? Int((12.0 / 4.333).rounded()) : 0
+        let unpaidBlockEnd = oldMonths + ruhensDuration + sperrDuration
 
-        let ruhensInGap = sprinter ? min(gapMonths, inp.fristMonate) : 0
-        let sperrInGap = (sprinter && inp.includeAlg1Loss)
-            ? min(max(0, gapMonths - ruhensInGap), Int((12.0 / 4.333).rounded()))
-            : 0
-        let alg1Months = (inp.claimAlg1In2027 && gapMonths > 0)
-            ? max(0, gapMonths - ruhensInGap - sperrInGap)
-            : 0
+        var alg1Months = 0
+        if inp.claimAlg1In2027 {
+            for month in 1...12 {
+                if month <= oldMonths { continue }
+                if hasNewJob && month >= inp.newJobStartMonth2027 { continue }
+                if month <= unpaidBlockEnd { continue }
+                if alg1Months < inp.alg1ClaimMonths {
+                    alg1Months += 1
+                }
+            }
+        }
+
         let alg1Ersatz = Double(alg1Months) * monthlyAlg1Net()
-
         return (oldMonths, oldGross, newMonths, newGross, alg1Months, alg1Ersatz)
     }
 
-    // § 10 Abs. 3 EStG: Joint cap deducts both own AND partner statutory RV (18.6% up to BBG-RV)
     private func computeRuerupCap(for inp: SimulationInput) -> Double {
         let tl = compute2027Timeline(for: inp, sprinter: inp.turboEnabled)
         let totalGross = tl.oldGross + tl.newGross
@@ -673,7 +675,6 @@ final class TaxEngineHost: ObservableObject {
         return monthlyBbgKv * (0.146 + input.kvZusatzbeitragPct / 100.0 + pvTotal)
     }
 
-    // §§ 149-153 SGB III: 20% SV flat rate + 2027 Lohnsteuer & Soli (StKl III only if sole earner, else StKl I/IV)
     private func monthlyAlg1Net() -> Double {
         let cappedAnnual = min(input.altesMonatsgehalt * 12.0, bbgRvYear)
         if cappedAnnual <= 0 { return 0 }
@@ -690,7 +691,6 @@ final class TaxEngineHost: ObservableObject {
     func recalculate() {
         var r = SimulationResult()
 
-        // 1. 2027 Gross, Neu-Job, ALG-1 (§ 32b) & Net Salary
         let tl = compute2027Timeline(for: input, sprinter: input.turboEnabled)
         let totalGross = tl.oldGross + tl.newGross
         r.oldJobMonths2027 = tl.oldMonths
@@ -711,7 +711,6 @@ final class TaxEngineHost: ObservableObject {
         r.effectiveAgFiktiv = agFiktivInfo.amount
         r.isAgFiktivAutoDefault = agFiktivInfo.isAuto
 
-        // 2. Effective Severance & Sprinter Bonus
         let sprinterBonus = input.turboEnabled
             ? Double(input.fristMonate) * input.altesMonatsgehalt * input.turboFaktor
             : 0
@@ -719,7 +718,6 @@ final class TaxEngineHost: ObservableObject {
         r.sprinterBonusGross = sprinterBonus
         r.effectiveAbfindung = effectiveAbf
 
-        // 3. Base Deductions & Ruhenszeit GKV
         let emp = employeeSocialAndZve(gross: totalGross, kinderZahl: input.kinderZahl)
         let ruhensMonths = input.turboEnabled ? input.fristMonate : 0
         r.ruhenszeitMonths = ruhensMonths
@@ -735,7 +733,6 @@ final class TaxEngineHost: ObservableObject {
         let payrollBaseZve = emp.zve + partnerZve
         let rawBaseBeforeLevers = payrollBaseZve - ruhensGkvTotal
 
-        // 4. Rürup Cap & Solver Gate
         let ruerupCap = computeRuerupCap(for: input)
         r.ruerupMaxCap = ruerupCap
         r.ruerupSweetSpot = min(ruerupCap, max(0, rawBaseBeforeLevers))
@@ -778,7 +775,6 @@ final class TaxEngineHost: ObservableObject {
         r.ruerupCapRemaining = max(0, ruerupCap - effRuerup)
         r.iabSweetSpotPurchase = min(pvIabMaxPurchase, max(0, (rawBaseBeforeLevers - effRuerup) * 2.0))
 
-        // 5. Upfront 2027 Payroll Withholding
         let barBrutto = max(0, effectiveAbf - effBav - effDrv)
         r.barBruttoVorSteuer = barBrutto
         let taxableAbfForPayroll = max(0, effectiveAbf - effBav - effDrv * 0.5)
@@ -793,7 +789,6 @@ final class TaxEngineHost: ObservableObject {
         r.upfrontTaxRatePct = barBrutto > 0 ? (upfrontTax / barBrutto) * 100.0 : 0
         r.sofortNetto2027 = max(0, barBrutto - upfrontTax)
 
-        // 6. Final 2028 Finanzamt Assessment with § 32b Progressionsvorbehalt (Uncapped so refunds stay intact)
         let taxableAbfFinal = max(0, effectiveAbf - effBav - effDrv * 0.5)
         let rawBaseWithLevers = rawBaseBeforeLevers - effRuerup - (effPv * 0.5)
 
@@ -828,11 +823,9 @@ final class TaxEngineHost: ObservableObject {
         r.finanzamtRefundOct2028 = (taxPaidOnBasePayroll + upfrontTax) - taxFinalObj.totalTax
         r.optimalNettoTotal = effectiveAbf - abfTaxFinal
 
-        // Table 3 Hard Liquidity Reconciliation (Includes 2027 ALG-1 cash; PV-IAB = 0 € Cash 2027)
         r.kontoCashEnd2027 = r.sofortNetto2027 + r.netSalary2027 + r.alg1Ersatzleistung2027 - effRuerup - ruhensGkvTotal
         r.endLiquidity2028 = r.kontoCashEnd2027 + r.finanzamtRefundOct2028
 
-        // 7. Standalone Lever Attribution & bAV Max-Cap Preview
         let upfrontNoBav = calcUpfrontPayrollTax(
             agFiktiv: r.effectiveAgFiktiv,
             taxableAbfindung: max(0, effectiveAbf - effDrv * 0.5),
@@ -895,7 +888,6 @@ final class TaxEngineHost: ObservableObject {
         r.iabSavings = max(0, taxNoIab - taxFinalObj.totalTax)
         r.iabSavingsPct = effPv > 0 ? (r.iabSavings / effPv) * 100.0 : 0
 
-        // 8. Pure Abfindung-Only Splitting Advantage / Fünftel-Falle (Single Rürup legally capped)
         let ownSingleRuerupCap = max(0, ruerupMaxSingle - min(totalGross, bbgRvYear) * 0.186)
         let ownSingleRuerup = min(effRuerup, ownSingleRuerupCap)
         let ownBaseWithLeversSingle = emp.zve - ruhensGkvTotal - ownSingleRuerup - effPv * 0.5
@@ -931,13 +923,8 @@ final class TaxEngineHost: ObservableObject {
             r.splittingAdvantageEur = 0
         }
 
-        // 9. Exact Sprinter Waterfall Bridge
         computeSprinterWaterfall(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
-
-        // 10. Section C: Reichweite
         computeReichweite(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
-
-        // 11. Section D: Job-Switch
         computeJobSwitch(into: &r, partnerZve: partnerZve, effBav: effBav, effDrv: effDrv, effRuerup: effRuerup, effPv: effPv)
 
         self.result = r
@@ -1130,6 +1117,7 @@ final class TaxEngineHost: ObservableObject {
 
             let emp27 = employeeSocialAndZve(gross: gross27, kinderZahl: input.kinderZahl)
             let ruhens = isSprinter ? input.fristMonate : 0
+            let sperr = (isSprinter && input.includeAlg1Loss) ? Int((12.0 / 4.333).rounded()) : 0
             let billableGkv = (input.preExitGkv == .pflicht) ? max(0, ruhens - 1) : ruhens
             let ruhensGkv = Double(billableGkv) * voluntaryGkvMonthly()
             let payrollBase = emp27.zve + partnerZve
@@ -1148,9 +1136,7 @@ final class TaxEngineHost: ObservableObject {
 
             var cash = max(0, sofort - effRuerup - input.upfrontSpend2027)
             let noticePhase = isSprinter ? 0 : input.fristMonate
-            let alg1Dur = isSprinter && input.includeAlg1Loss
-                ? max(0, input.alg1ClaimMonths - Int((12.0 / 4.333).rounded()))
-                : input.alg1ClaimMonths
+            let alg1Dur = max(0, input.alg1ClaimMonths - sperr)
 
             var series: [Double] = [cash]
             var bridgeSafe = true
@@ -1163,7 +1149,9 @@ final class TaxEngineHost: ObservableObject {
                 } else if m <= noticePhase + ruhens {
                     let gkvThisMonth = (input.preExitGkv == .pflicht && m == noticePhase + 1) ? 0 : voluntaryGkvMonthly()
                     cash -= (input.monthlyExpenses + gkvThisMonth)
-                } else if m <= noticePhase + ruhens + alg1Dur {
+                } else if m <= noticePhase + ruhens + sperr {
+                    cash -= (input.monthlyExpenses + postGkv)
+                } else if m <= noticePhase + ruhens + sperr + alg1Dur {
                     cash -= max(0, input.monthlyExpenses - alg1)
                 } else {
                     cash -= (input.monthlyExpenses + postGkv)
@@ -1183,8 +1171,8 @@ final class TaxEngineHost: ObservableObject {
                 rawSegments.append(("Gehalt/Frist", cursor, end))
                 cursor = end
             }
-            if ruhens > 0 && cursor < depletedMonth {
-                let end = min(depletedMonth, cursor + Double(ruhens))
+            if (ruhens + sperr) > 0 && cursor < depletedMonth {
+                let end = min(depletedMonth, cursor + Double(ruhens + sperr))
                 rawSegments.append(("Ruhenszeit", cursor, end))
                 cursor = end
             }
@@ -1208,7 +1196,7 @@ final class TaxEngineHost: ObservableObject {
                 )
             }
 
-            let alg1End = startOffset + noticePhase + ruhens + alg1Dur
+            let alg1End = startOffset + noticePhase + ruhens + sperr + alg1Dur
             return (depletedMonth, alg1End, bridgeSafe, series, bars)
         }
 
@@ -1492,7 +1480,6 @@ struct MainTabContainerView: View {
 
         do {
             try renderer.writePDF(to: url) { ctx in
-                // Page 1: Eingaben & 2027 Timeline
                 pageCounter += 1
                 ctx.beginPage()
                 drawHeader(pageTitle: "1. Eingaben & 2027-Zeitstrahl", pageNum: pageCounter)
@@ -1525,7 +1512,6 @@ struct MainTabContainerView: View {
                 p1c.draw(in: CGRect(x: 36, y: 332, width: 523, height: 80), withAttributes: bodyAttrs)
                 drawFooter()
 
-                // Page 2: Steuer-Optimierung
                 pageCounter += 1
                 ctx.beginPage()
                 drawHeader(pageTitle: "2. Steuer-Optimierung", pageNum: pageCounter)
@@ -1547,7 +1533,6 @@ struct MainTabContainerView: View {
                 p2b.draw(in: CGRect(x: 36, y: 200, width: 523, height: 110), withAttributes: bodyAttrs)
                 drawFooter()
 
-                // Page 3: Vollständiges Ergebnis (KPIs + Tables 1, 2, 3)
                 pageCounter += 1
                 ctx.beginPage()
                 drawHeader(pageTitle: "3. Vollständiges Ergebnis 2027/2028", pageNum: pageCounter)
@@ -1573,7 +1558,6 @@ struct MainTabContainerView: View {
                 t3.draw(in: CGRect(x: 36, y: 268, width: 523, height: 75), withAttributes: bodyAttrs)
                 drawFooter()
 
-                // Page 4 (Optional): Reichweite / Cash-Burn
                 if options.includeReichweite {
                     pageCounter += 1
                     ctx.beginPage()
@@ -1587,7 +1571,6 @@ struct MainTabContainerView: View {
                     drawFooter()
                 }
 
-                // Page 5 (Optional): Job-Switch
                 if options.includeJobSwitch {
                     pageCounter += 1
                     ctx.beginPage()
@@ -1794,7 +1777,7 @@ struct CompactSliderRow: View {
     }
 }
 
-// MARK: - Tab 1: Eingaben (Smart Defaults, Neu-Job 2027 & § 32b ALG-1 Gap)
+// MARK: - Tab 1: Eingaben (Single-Line Pickers, Smart Defaults & § 32b Timeline)
 
 struct InputsTabView: View {
     @EnvironmentObject var engine: TaxEngineHost
@@ -1846,10 +1829,11 @@ struct InputsTabView: View {
                     step: 250
                 )
 
-                HStack {
+                HStack(spacing: 8) {
                     Text("Austrittsmonat 2027")
                         .font(.subheadline.weight(.medium))
-                    Spacer()
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
                     Picker("", selection: $engine.input.payoutMonth2027) {
                         ForEach(1...12, id: \.self) { m in
                             Text("\(monthNames[m - 1]) 2027").tag(m)
@@ -1857,12 +1841,14 @@ struct InputsTabView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
+                    .lineLimit(1)
                 }
 
                 Stepper(value: $engine.input.fristMonate, in: 1...12) {
                     HStack {
                         Text("Kündigungsfrist")
                             .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
                         Spacer()
                         Text("\(engine.input.fristMonate) Mon.")
                             .font(.subheadline.bold())
@@ -1870,18 +1856,20 @@ struct InputsTabView: View {
                     }
                 }
 
-                HStack {
+                HStack(spacing: 8) {
                     Text("Neuer Job in 2027")
                         .font(.subheadline.weight(.medium))
-                    Spacer()
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
                     Picker("", selection: $engine.input.newJobStartMonth2027) {
-                        Text("Kein Neu-Job 2027").tag(0)
+                        Text("Kein Neu-Job").tag(0)
                         ForEach(2...12, id: \.self) { m in
                             Text("Ab \(monthNames[m - 1]) 2027").tag(m)
                         }
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
+                    .lineLimit(1)
                 }
 
                 if engine.input.newJobStartMonth2027 >= 2 {
@@ -1917,7 +1905,10 @@ struct InputsTabView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("2027: \(eur(engine.result.oldJobGross2027)) Alt-AG (\(engine.result.oldJobMonths2027) M.) + \(eur(engine.result.newJobGross2027)) Neu-Job (\(engine.result.newJobMonths2027) M.)")
+                    let newJobSummary = engine.input.newJobStartMonth2027 >= 2
+                        ? "\(eur(engine.result.newJobGross2027)) Neu-Job (\(engine.result.newJobMonths2027) M.)"
+                        : "\(eur(engine.result.newJobGross2027)) Zusätzl. 2027"
+                    Text("2027: \(eur(engine.result.oldJobGross2027)) Alt-AG (\(engine.result.oldJobMonths2027) M.) + \(newJobSummary)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
@@ -1933,11 +1924,12 @@ struct InputsTabView: View {
             }
 
             Section {
-                HStack {
+                HStack(spacing: 8) {
                     Text("Steuertarif")
                         .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
                     InfoIconButton(topic: .tarifSplitting, selectedTopic: $selectedInfoTopic)
-                    Spacer()
+                    Spacer(minLength: 6)
                     Picker("", selection: $engine.input.isSplitting) {
                         Text("Grundtarif").tag(false)
                         Text("Splitting").tag(true)
@@ -1989,15 +1981,16 @@ struct InputsTabView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
 
-                HStack {
+                HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Kinderfreibeträge")
                             .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
                         Text("ALG 1: \(Int(engine.input.alg1SatzPct)) % · § 31 Günstigerprüfung")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Spacer()
+                    Spacer(minLength: 8)
                     Picker("", selection: $engine.input.kinderZahl) {
                         ForEach(kinderOptions, id: \.self) { k in
                             Text(k == floor(k) ? "\(Int(k))" : String(format: "%.1f", k).replacingOccurrences(of: ".", with: ","))
@@ -2006,12 +1999,14 @@ struct InputsTabView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
+                    .lineLimit(1)
                 }
 
-                HStack {
+                HStack(spacing: 8) {
                     Text("Kirchensteuer")
                         .font(.subheadline.weight(.medium))
-                    Spacer()
+                        .lineLimit(1)
+                    Spacer(minLength: 6)
                     Picker("", selection: $engine.input.churchRate) {
                         ForEach(ChurchTaxOption.allCases) { opt in
                             Text(opt.shortLabel).tag(opt.rawValue)
@@ -2021,11 +2016,12 @@ struct InputsTabView: View {
                     .frame(width: 215)
                 }
 
-                HStack {
+                HStack(spacing: 8) {
                     Text("GKV vor Austritt")
                         .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
                     InfoIconButton(topic: .preExitGkv, selectedTopic: $selectedInfoTopic)
-                    Spacer()
+                    Spacer(minLength: 8)
                     Picker("", selection: $engine.input.preExitGkv) {
                         ForEach(PreExitGkvStatus.allCases) { status in
                             Text(status.displayName).tag(status)
@@ -2033,6 +2029,7 @@ struct InputsTabView: View {
                     }
                     .labelsHidden()
                     .pickerStyle(.menu)
+                    .lineLimit(1)
                 }
 
                 CompactSliderRow(
@@ -2137,7 +2134,7 @@ struct InputsTabView: View {
     }
 }
 
-// MARK: - Tab 2: Steuer-Optimierung (Untouched Lever Structure)
+// MARK: - Tab 2: Steuer-Optimierung
 
 struct TaxOptimizationTabView: View {
     @EnvironmentObject var engine: TaxEngineHost
@@ -2207,7 +2204,6 @@ struct TaxOptimizationTabView: View {
                     }
                 }
 
-                // Lever 1: bAV
                 Section {
                     CompactSliderRow(
                         title: "1. bAV-Umwandlung",
@@ -2232,7 +2228,6 @@ struct TaxOptimizationTabView: View {
                     }
                 }
 
-                // Lever 2: Rürup / Basisrente
                 Section {
                     CompactSliderRow(
                         title: "2. Rürup / Basisrente",
@@ -2272,7 +2267,6 @@ struct TaxOptimizationTabView: View {
                     }
                 }
 
-                // Lever 3: DRV-Ausgleich (V0210)
                 Section {
                     CompactSliderRow(
                         title: "3. DRV-Ausgleich (V0210)",
@@ -2297,7 +2291,6 @@ struct TaxOptimizationTabView: View {
                     }
                 }
 
-                // Lever 4: PV-Investition (50% IAB)
                 Section {
                     CompactSliderRow(
                         title: "4. PV-Investition (50 % IAB)",
@@ -2358,7 +2351,7 @@ struct TaxOptimizationTabView: View {
     }
 }
 
-// MARK: - Tab 3: Ergebnis (KPIs, Floating Waterfall & 3 Collapsible Tables)
+// MARK: - Tab 3: Ergebnis (KPIs, Side-by-Side Donuts, Waterfall & 3 Tables)
 
 struct ResultsTabView: View {
     @EnvironmentObject var engine: TaxEngineHost
@@ -2378,6 +2371,13 @@ struct ResultsTabView: View {
                     kpiCard("Optimal-Netto Gesamt", value: eur(engine.result.optimalNettoTotal), subtitle: "Steuerlast: \(eur(engine.result.totalTaxFinal))", color: .blue)
                     kpiCard("Bar-Liquidität Ende 28", value: eur(engine.result.endLiquidity2028), subtitle: "inkl. Netto-Gehalt 27", color: .purple)
                 }
+
+                SideBySideResultDonutsCard(
+                    sofortNetto: engine.result.sofortNetto2027,
+                    upfrontTax: engine.result.upfrontPayrollTax,
+                    optimalNetto: engine.result.optimalNettoTotal,
+                    finalTax: max(0, engine.result.totalTaxFinal)
+                )
 
                 if engine.input.taxOptimizationEnabled {
                     VStack(alignment: .leading, spacing: 8) {
@@ -2628,6 +2628,148 @@ struct ResultsTabView: View {
         .padding(10)
         .background(color.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+// MARK: - Side-by-Side Interactive Donut Charts (Ergebnis)
+
+private struct DonutSliceItem: Identifiable {
+    let id = UUID()
+    let label: String
+    let value: Double
+    let color: Color
+}
+
+struct SideBySideResultDonutsCard: View {
+    let sofortNetto: Double
+    let upfrontTax: Double
+    let optimalNetto: Double
+    let finalTax: Double
+
+    @State private var selectedAngle1: Double?
+    @State private var selectedAngle2: Double?
+
+    private var slices1: [DonutSliceItem] {
+        [
+            DonutSliceItem(label: "Sofort-Netto", value: max(0, sofortNetto), color: .blue),
+            DonutSliceItem(label: "LSt-Einbehalt", value: max(0, upfrontTax), color: .red)
+        ]
+    }
+
+    private var slices2: [DonutSliceItem] {
+        [
+            DonutSliceItem(label: "Optimal-Netto", value: max(0, optimalNetto), color: .green),
+            DonutSliceItem(label: "Endg. Steuer", value: max(0, finalTax), color: .orange)
+        ]
+    }
+
+    private func selectedSlice(in slices: [DonutSliceItem], angle: Double?) -> DonutSliceItem? {
+        guard let angle else { return nil }
+        var cumulative = 0.0
+        for item in slices {
+            cumulative += item.value
+            if angle <= cumulative { return item }
+        }
+        return slices.last
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            donutCard(
+                title: "1. AG-Abrechnung",
+                total: max(0, sofortNetto + upfrontTax),
+                slices: slices1,
+                selectedAngle: $selectedAngle1
+            )
+            donutCard(
+                title: "2. FA-Endabrechnung",
+                total: max(0, optimalNetto + finalTax),
+                slices: slices2,
+                selectedAngle: $selectedAngle2
+            )
+        }
+    }
+
+    private func donutCard(
+        title: String,
+        total: Double,
+        slices: [DonutSliceItem],
+        selectedAngle: Binding<Double?>
+    ) -> some View {
+        let active = selectedSlice(in: slices, angle: selectedAngle.wrappedValue)
+        let centerTitle = active?.label ?? "Gesamt"
+        let centerValue = active?.value ?? total
+        let centerPct = (active != nil && total > 0) ? " (\(pct((active!.value / total) * 100)))" : ""
+
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+
+            ZStack {
+                Chart(slices) { item in
+                    SectorMark(
+                        angle: .value("Betrag", item.value),
+                        innerRadius: .ratio(0.62),
+                        angularInset: 1.5
+                    )
+                    .foregroundStyle(item.color)
+                    .opacity(active == nil || active?.label == item.label ? 1.0 : 0.45)
+                }
+                .chartAngleSelection(value: selectedAngle)
+                .frame(height: 122)
+
+                VStack(spacing: 1) {
+                    Text(centerTitle)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(eur(centerValue))
+                        .font(.caption2.bold())
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                    if !centerPct.isEmpty {
+                        Text(centerPct)
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(active?.color ?? .secondary)
+                    }
+                }
+                .frame(maxWidth: 74)
+            }
+
+            VStack(spacing: 3) {
+                ForEach(slices) { item in
+                    let isHighlighted = active?.label == item.label
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(item.color)
+                            .frame(width: 6, height: 6)
+                        Text(item.label)
+                            .font(.system(size: 10, weight: isHighlighted ? .bold : .regular))
+                            .foregroundStyle(isHighlighted ? .primary : .secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                        Spacer(minLength: 2)
+                        Text(eur(item.value))
+                            .font(.system(size: 10, weight: .semibold))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+            }
+
+            Text("Tippen/ziehen für Werte")
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
