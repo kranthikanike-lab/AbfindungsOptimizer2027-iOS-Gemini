@@ -81,14 +81,16 @@ private func infoContent(for topic: StatutoryTopic) -> StatutoryInfoContent {
         )
     case .alg1Rules:
         return StatutoryInfoContent(
-            title: "Sprinter: Ruhenszeit, Sperrzeit & Abfindungs-Anteil",
-            subtitle: "§§ 143a, 159 SGB III · Alter, Betriebszugehörigkeit & 9M ALG 1",
+            title: "Sprinter-Option, Faktor & ALG-1-Regeln",
+            subtitle: "Sofort-Austritt, Sprinter-Prämie · §§ 143a, 159 SGB III",
             sections: [
-                ("1. Ruhenszeit (§ 143a SGB III)",
+                ("1. Was bedeutet Sprinter-Option & Sprinter-Faktor?",
+                 "• Sofort-Austritt ohne Kündigungsfrist: Mit der Sprinter-Option (Turboklausel) verzichten Sie darauf, Ihre reguläre Kündigungsfrist abzusitzen, und scheiden sofort bzw. früher aus dem Unternehmen aus.\n• Sprinter-Faktor (z. B. 1,5x): Für jeden eingesparten Monat der Kündigungsfrist zahlt der Arbeitgeber eine zusätzliche Prämie als Vielfaches Ihres Monatsbruttos (bei Faktor 1,5x also 1,5 Monatsgehälter pro eingespartem Fristmonat). Dafür entfallen die regulären Gehaltszahlungen während der Kündigungsfrist."),
+                ("2. Ruhenszeit (§ 143a SGB III)",
                  "Greift bei vorzeitigem Austritt (Sprinter) mit Abfindung, wenn das Arbeitsverhältnis ohne Abfindung erst nach Ablauf der regulären Kündigungsfrist (fristMonate, z. B. 5 Monate) geendet hätte. Während der Ruhenszeit ruht der ALG-1-Anspruch (0 € ALG 1), da eine Doppelzahlung parallel zur fiktiven Kündigungsfrist vermieden werden soll. Bei freiwilliger GKV/PKV fallen laufende Beiträge an (bei Pflicht-GKV greift i. d. R. der 1-Monats-Nachlauf nach § 19 Abs. 2 SGB V)."),
-                ("2. Sperrzeit (§ 159 SGB III) & Zusammenspiel mit der Ruhenszeit",
+                ("3. Sperrzeit (§ 159 SGB III) & Zusammenspiel mit der Ruhenszeit",
                  "Bei freiwilligem Ausscheiden oder Aufhebungsvertrag ohne wichtigen Grund kann eine Sperrzeit von regelmäßig 12 Wochen (ca. 3 Monaten) eintreten.\n• Gleichzeitiger Ablauf statt einfacher Addition: Die Sperrzeit beginnt ab dem Austritt und läuft bei einer längeren Ruhenszeit (z. B. 5 Monate Kündigungsfrist) parallel / überlappend innerhalb der ersten Monate ab — sie wird also nicht pauschal als weitere 3 Monate oben auf die 5 Monate addiert.\n• Anspruchskürzung (z. B. 12M → 9M): Durch die Sperrzeit verkürzt sich jedoch die gesamte ALG-1-Bezugsdauer entsprechend (aus einem 12-monatigen Anspruch werden 9 Monate ALG 1 nach Ablauf der Start-/Ruhensphase)."),
-                ("3. Abfindungs-Anteil nach Alter & Jahren im Job",
+                ("4. Abfindungs-Anteil nach Alter & Jahren im Job",
                  "Je nach Lebensalter und Dauer der Betriebszugehörigkeit (Jahre im Job) wird im Modell nur ein bestimmter Prozentsatz der Abfindung für die Sprinter-Überbrückung angesetzt — nicht zwingend 100 %:\n• < 5 Jahre im Job: < 50 J. ~50 % · 50–54 J. ~60 % · 55+ J. ~70 %\n• 5–14 Jahre im Job: < 50 J. ~65 % · 50–54 J. ~75 % · 55+ J. ~85 %\n• 15+ Jahre im Job: < 50 J. ~80 % · 50–54 J. ~90 % · 55+ J. 100 %"),
                 ("Hinweis (§ 2 StBerG)",
                  "Unverbindliche Orientierungstabelle und Modellrechnung (keine Rechts- oder Steuerberatung). Maßgeblich im Einzelfall sind Vereinbarung/Sozialplan sowie der Bescheid der Agentur für Arbeit.")
