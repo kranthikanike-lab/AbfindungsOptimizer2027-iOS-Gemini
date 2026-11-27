@@ -165,7 +165,7 @@ struct SimulationInput: Codable, Equatable {
     // Sprinter Option
     var turboEnabled: Bool = false
     var turboFaktor: Double = 1.5
-    var includeAlg1Loss: Bool = false
+   
 
     // Section B: Tax Optimization Levers
     var taxOptimizationEnabled: Bool = false
