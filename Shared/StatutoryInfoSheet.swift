@@ -17,6 +17,9 @@ enum StatutoryTopic: String, Identifiable {
     case pvIab7g
     case postAlg1Gkv
     case liquidityTimeline
+    case postAlg1Gkv
+    case realReturnInflation
+    case liquidityTimeline
 
     var id: String { rawValue }
 }
@@ -40,6 +43,21 @@ private func infoContent(for topic: StatutoryTopic) -> StatutoryInfoContent {
                  "Tarifermäßigung für außerordentliche Einkünfte (Abfindung). Lohnersatzleistungen wie ALG 1 in 2027 fließen über den besonderen Steuersatz (§ 32b Abs. 2 EStG) in die Progression ein."),
                 ("Hinweis (§ 2 StBerG)",
                  "Unverbindliche Modellrechnung auf Basis der Rechengrößen 2027. Keine Steuer- oder Rechtsberatung.")
+            ]
+        )
+    case .realReturnInflation:
+        return StatutoryInfoContent(
+            title: "Real-Zins / Inflation p.a.",
+            subtitle: "Rendite nach Inflation · Wirkung auf die Reichweite",
+            sections: [
+                ("Was bedeutet der Wert?",
+                 "Der Real-Zins entspricht der jährlichen Kapitalrendite abzüglich der Inflation (reale Kaufkraft-Veränderung Ihres Guthabens pro Jahr)."),
+                ("Positiver Wert (+, z. B. +2,0 %)",
+                 "Ihr Guthaben wächst real stärker als die Inflation (Kapitalertrag > Inflation). Das verlängert Ihre Reichweite."),
+                ("Negativer Wert (−, z. B. −2,0 %)",
+                 "Die Inflation übersteigt den Zins (Kaufkraftverlust > Rendite). Das verkürzt Ihre Reichweite."),
+                ("Neutral (0,0 %)",
+                 "Zinsen gleichen die Inflation exakt aus — die Kaufkraft Ihres Guthabens bleibt konstant.")
             ]
         )
     case .tarifSplitting:
@@ -182,7 +200,7 @@ struct InfoIconButton: View {
         Button {
             selectedTopic = topic
         } label: {
-            Image(systemName: "info.circle")
+            Image(systemName: "questionmark.circle")
                 .font(.caption)
                 .foregroundStyle(.blue)
         }
