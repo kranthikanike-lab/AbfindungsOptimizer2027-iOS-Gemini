@@ -9,22 +9,16 @@ targets:
     platform: iOS
     sources:
       - path: Shared
-    info:
-      path: Info.plist
-      properties:
-        CFBundleDisplayName: AbfindungsPilot
-        UILaunchScreen: {}
-        ITSAppUsesNonExemptEncryption: false
-        UISupportedInterfaceOrientations:
-          - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.kranthikanike.abfindungsoptimizer2027
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: AbfindungsPilot
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        TARGETED_DEVICE_FAMILY: "1,2"
         CURRENT_PROJECT_VERSION: "5"
-        MARKETING_VERSION: "27.1.1"
-        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "27.2.1"
