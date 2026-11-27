@@ -2874,23 +2874,39 @@ struct ReichweiteTabView: View {
                         }
                     }
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 8) {
+VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
                             Text("GKV nach ALG 1")
                                 .font(.subheadline.weight(.medium))
                                 .lineLimit(1)
+                                .layoutPriority(1)
                             InfoIconButton(topic: .postAlg1Gkv, selectedTopic: $selectedInfoTopic)
-                            Spacer(minLength: 8)
-                            Picker("", selection: $engine.input.postAlg1GkvMode) {
+                            Spacer(minLength: 4)
+                            Menu {
                                 ForEach(PostAlg1GkvMode.allCases) { m in
-                                    Text(m.displayName).tag(m)
+                                    Button {
+                                        engine.input.postAlg1GkvMode = m
+                                    } label: {
+                                        if engine.input.postAlg1GkvMode == m {
+                                            Label(m.displayName, systemImage: "checkmark")
+                                        } else {
+                                            Text(m.displayName)
+                                        }
+                                    }
                                 }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(engine.input.postAlg1GkvMode.displayName)
+                                        .font(.subheadline)
+                                        .lineLimit(1)
+                                    Image(systemName: "chevron.up.chevron.down")
+                                        .font(.caption2)
+                                }
+                                .foregroundStyle(.blue)
+                                .fixedSize(horizontal: true, vertical: false)
                             }
-                            .labelsHidden()
-                            .pickerStyle(.menu)
-                            .lineLimit(1)
                         }
-                        Text("Angesetzter Beitrag nach ALG 1: \(eur(engine.result.effectivePostGkvMonthly))/Mo")
+                        Text("Beitrag nach ALG 1: \(eur(engine.result.effectivePostGkvMonthly))/Mo")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
@@ -2909,7 +2925,7 @@ struct ReichweiteTabView: View {
 
                     CompactSliderRow(
                         title: "Real-Zins / Inflation p.a.",
-                        subtitle: realRateExplanation,
+                        topic: .realReturnInflation,
                         selectedInfoTopic: $selectedInfoTopic,
                         value: $engine.input.realReturnPct,
                         range: -3.0...6.0,
