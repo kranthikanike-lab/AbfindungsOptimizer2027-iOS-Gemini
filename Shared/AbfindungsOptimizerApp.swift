@@ -152,6 +152,7 @@ struct SimulationInput: Codable, Equatable {
     var newJobStartMonth2027: Int = 0
     var newJobMonthlyGross: Double = 6_500
     var claimAlg1In2027: Bool = true
+    var includeAlg1Loss: Bool = true
 
     // Family, Tax & GKV
     var isSplitting: Bool = false
@@ -316,7 +317,7 @@ struct SimulationResult {
 // MARK: - 2027 Statutory German Tax, § 32b Progressionsvorbehalt, Solver & Runway Engine
 
 final class TaxEngineHost: ObservableObject {
-    private static let storageKey = "abfindungspilot_input_v27_2_1"
+   private static let storageKey = "abfindungspilot_input_v27_2_2"
 
     @Published var input: SimulationInput {
         didSet {
