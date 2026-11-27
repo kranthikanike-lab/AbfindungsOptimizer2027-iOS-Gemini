@@ -43,6 +43,32 @@ private struct IdentifiableURL: Identifiable {
     let url: URL
 }
 
+private struct TabHeaderTitleView: View {
+    let title: String
+    var infoTopic: StatutoryTopic? = nil
+    @Binding var selectedInfoTopic: StatutoryTopic?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(.title3.weight(.bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            if let infoTopic {
+                Button {
+                    selectedInfoTopic = infoTopic
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(.blue)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(title) Informationen")
+            }
+        }
+    }
+}
+
 // MARK: - Domain Models
 
 enum PreExitGkvStatus: String, CaseIterable, Identifiable, Codable {
@@ -158,7 +184,7 @@ struct SimulationInput: Codable, Equatable {
     var partnerGehalt2027: Double = 0
     var kinderZahl: Double = 0.0
     var churchRate: Double = 0.0
-    var kvZusatzbeitragPct: Double = 2.5
+    var kvZusatzbeitragPct: Double = 2.9
     var preExitGkv: PreExitGkvStatus = .pflicht
 
     // Sprinter Option
@@ -318,7 +344,7 @@ struct SimulationResult {
 // MARK: - 2027 Statutory German Tax, § 32b Progressionsvorbehalt, Solver & Runway Engine
 
 final class TaxEngineHost: ObservableObject {
-    private static let storageKey = "abfindungspilot_input_v27_2_2"
+    private static let storageKey = "abfindungspilot_input_v27_2_3"
 
     @Published var input: SimulationInput {
         didSet {
@@ -1364,9 +1390,10 @@ struct MainTabContainerView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .principal) {
-                            Text("AbfindungsPilot")
-                                .font(.headline.weight(.bold))
-                                .lineLimit(1)
+                            TabHeaderTitleView(
+                                title: "AbfindungsPilot",
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
                         }
                         sharedToolbar
                     }
@@ -1376,9 +1403,16 @@ struct MainTabContainerView: View {
 
             NavigationStack {
                 TaxOptimizationTabView(selectedInfoTopic: $selectedInfoTopic)
-                    .navigationTitle("Steuer-Hebel")
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { sharedToolbar }
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TabHeaderTitleView(
+                                title: "Steuer-Hebel",
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
+                        }
+                        sharedToolbar
+                    }
             }
             .tabItem { Label("Steuer", systemImage: "wand.and.stars") }
             .tag(1)
@@ -1388,27 +1422,50 @@ struct MainTabContainerView: View {
                     selectedInfoTopic: $selectedInfoTopic,
                     onOpenPDFOptions: { showSettingsSheet = true }
                 )
-                .navigationTitle("Ergebnis 2027")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar { sharedToolbar }
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        TabHeaderTitleView(
+                            title: "Ergebnis 2027",
+                            selectedInfoTopic: $selectedInfoTopic
+                        )
+                    }
+                    sharedToolbar
+                }
             }
             .tabItem { Label("Ergebnis", systemImage: "chart.pie.fill") }
             .tag(2)
 
             NavigationStack {
                 ReichweiteTabView(selectedInfoTopic: $selectedInfoTopic)
-                    .navigationTitle("Reichweite")
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { sharedToolbar }
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TabHeaderTitleView(
+                                title: "Reichweite",
+                                infoTopic: .reichweiteOverview,
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
+                        }
+                        sharedToolbar
+                    }
             }
             .tabItem { Label("Reichweite", systemImage: "hourglass") }
             .tag(3)
 
             NavigationStack {
                 JobSwitchTabView(selectedInfoTopic: $selectedInfoTopic)
-                    .navigationTitle("Job-Switch")
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { sharedToolbar }
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TabHeaderTitleView(
+                                title: "Job-Switch",
+                                infoTopic: .jobSwitchOverview,
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
+                        }
+                        sharedToolbar
+                    }
             }
             .tabItem { Label("Switch", systemImage: "arrow.left.arrow.right") }
             .tag(4)
@@ -1471,7 +1528,7 @@ struct MainTabContainerView: View {
         triggerLightHaptic()
         let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_v27_2_1_Report.pdf")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_v27_2_3_Report.pdf")
         let inp = engine.input
         let res = engine.result
 
@@ -1493,7 +1550,7 @@ struct MainTabContainerView: View {
         ]
 
         func drawHeader(pageTitle: String, pageNum: Int) {
-            "AbfindungsPilot 2027 (v27.2.1) – \(pageTitle)".draw(at: CGPoint(x: 36, y: 32), withAttributes: titleAttrs)
+            "AbfindungsPilot 2027 (v27.2.3) – \(pageTitle)".draw(at: CGPoint(x: 36, y: 32), withAttributes: titleAttrs)
             "Seite \(pageNum)".draw(at: CGPoint(x: 520, y: 36), withAttributes: footAttrs)
         }
 
@@ -1683,7 +1740,7 @@ struct SettingsAndPDFSheetView: View {
                     .padding(.vertical, 2)
                 }
 
-                Section("A4 PDF-Report (Mehrseitig · v27.2.1)") {
+                Section("A4 PDF-Report (Mehrseitig · v27.2.3)") {
                     Text("Seiten 1–3 (Eingaben, Steuer, Ergebnis) sind immer enthalten:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1891,6 +1948,35 @@ struct InputsTabView: View {
                     }
                 }
 
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("AG-Fiktivgehalt (LSt)")
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                        InfoIconButton(topic: .agFiktiv, selectedTopic: $selectedInfoTopic)
+                        Spacer()
+                        if !engine.result.isAgFiktivAutoDefault {
+                            Button("Auto") {
+                                engine.input.agFiktivGehalt = 0
+                            }
+                            .font(.caption.weight(.semibold))
+                        }
+                        Text(eur(engine.result.effectiveAgFiktiv))
+                            .font(.subheadline.bold())
+                            .monospacedDigit()
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { engine.result.effectiveAgFiktiv },
+                            set: { engine.input.agFiktivGehalt = $0 }
+                        ),
+                        in: 30_000...200_000,
+                        step: 2_500
+                    )
+                    .controlSize(.small)
+                }
+                .padding(.vertical, 1)
+
                 HStack(spacing: 8) {
                     Text("Neuer Job in 2027")
                         .font(.subheadline.weight(.medium))
@@ -2067,43 +2153,19 @@ struct InputsTabView: View {
                     .lineLimit(1)
                 }
 
-                CompactSliderRow(
-                    title: "KV-Zusatzbeitrag",
-                    selectedInfoTopic: $selectedInfoTopic,
-                    value: $engine.input.kvZusatzbeitragPct,
-                    range: 1.0...4.5,
-                    step: 0.1,
-                    valueFormatter: { pct($0) }
-                )
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text("AG-Fiktivgehalt (LSt)")
-                            .font(.subheadline.weight(.medium))
-                            .lineLimit(1)
-                        InfoIconButton(topic: .agFiktiv, selectedTopic: $selectedInfoTopic)
-                        Spacer()
-                        if !engine.result.isAgFiktivAutoDefault {
-                            Button("Auto") {
-                                engine.input.agFiktivGehalt = 0
-                            }
-                            .font(.caption.weight(.semibold))
+                if engine.input.preExitGkv != .pkv {
+                    Stepper(value: $engine.input.kvZusatzbeitragPct, in: 0.5...6.0, step: 0.1) {
+                        HStack {
+                            Text("KV-Zusatzbeitrag")
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(pct(engine.input.kvZusatzbeitragPct))
+                                .font(.subheadline.bold())
+                                .monospacedDigit()
                         }
-                        Text(eur(engine.result.effectiveAgFiktiv))
-                            .font(.subheadline.bold())
-                            .monospacedDigit()
                     }
-                    Slider(
-                        value: Binding(
-                            get: { engine.result.effectiveAgFiktiv },
-                            set: { engine.input.agFiktivGehalt = $0 }
-                        ),
-                        in: 30_000...200_000,
-                        step: 2_500
-                    )
-                    .controlSize(.small)
                 }
-                .padding(.vertical, 1)
             } header: {
                 Text("Familie, Kinder & Steuern").font(.caption.weight(.semibold))
             }
