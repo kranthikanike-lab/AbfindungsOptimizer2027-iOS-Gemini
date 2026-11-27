@@ -43,6 +43,230 @@ private struct IdentifiableURL: Identifiable {
     let url: URL
 }
 
+// MARK: - Statutory Info Topics & Sheet
+
+enum StatutoryTopic: String, Identifiable {
+    case recht2027
+    case tarifSplitting
+    case preExitGkv
+    case agFiktiv
+    case sprinterLegal
+    case alg1Rules
+    case reichweiteLogic
+    case solverModes
+    case bav63
+    case ruerup10
+    case drvV0210
+    case pvIab7g
+    case postAlg1Gkv
+    case liquidityTimeline
+
+    var id: String { rawValue }
+}
+
+private struct StatutoryInfoContent {
+    let title: String
+    let subtitle: String
+    let sections: [(heading: String, body: String)]
+}
+
+private func infoContent(for topic: StatutoryTopic) -> StatutoryInfoContent {
+    switch topic {
+    case .recht2027:
+        return StatutoryInfoContent(
+            title: "Gesetzliche Parameter 2027",
+            subtitle: "EStG §§ 32a, 32b, 34, 10, 7g · SGB III & SGB V",
+            sections: [
+                ("Einkommensteuer 2027 (§ 32a EStG)",
+                 "Grundfreibetrag 12.564 € (Splitting: 25.128 €), Spitzensteuersatz 42 % ab 70.600 € und 45 % ab 285.000 € (Einzelveranlagung)."),
+                ("Fünftelregelung (§ 34 EStG) & § 32b EStG",
+                 "Tarifermäßigung für außerordentliche Einkünfte (Abfindung). Lohnersatzleistungen wie ALG 1 in 2027 fließen über den besonderen Steuersatz (§ 32b Abs. 2 EStG) in die Progression ein."),
+                ("Hinweis (§ 2 StBerG)",
+                 "Unverbindliche Modellrechnung auf Basis der Rechengrößen 2027. Keine Steuer- oder Rechtsberatung.")
+            ]
+        )
+    case .tarifSplitting:
+        return StatutoryInfoContent(
+            title: "Grundtarif vs. Ehegattensplitting",
+            subtitle: "§ 32a Abs. 5 EStG · Partnergehalt & § 34",
+            sections: [
+                ("Wirkung auf die Abfindung",
+                 "Beim Splittingtarif wird das gemeinsame zvE halbiert und der Tarif verdoppelt. Je nach Partnergehalt und Fünftelregelung kann der Abfindungsvorteil gegenüber dem Grundtarif höher oder geringer ausfallen.")
+            ]
+        )
+    case .preExitGkv:
+        return StatutoryInfoContent(
+            title: "GKV / PKV vor Austritt & Ruhenszeit",
+            subtitle: "SGB V · Nachlauf & freiwillige Beiträge",
+            sections: [
+                ("Pflicht-GKV vs. Freiwillig / PKV",
+                 "Bei Pflichtversicherten greift im ersten Monat nach Beschäftigungsende häufig der gesetzliche Nachlauf (§ 19 Abs. 2 SGB V), bevor ggf. freiwillige Beiträge anfallen.")
+            ]
+        )
+    case .agFiktiv:
+        return StatutoryInfoContent(
+            title: "AG-Fiktivgehalt (Lohnsteuer-Einbehalt 2027)",
+            subtitle: "Vorläufiger Lohnsteuerabzug beim Arbeitgeber",
+            sections: [
+                ("Auto-Default vs. Manuell",
+                 "Ohne eigenen Eingabewert wird ein sinnvoller Richtwert aus dem Gehalt 2027 abgeleitet. Der endgültige Ausgleich erfolgt über die Einkommensteuerveranlagung 2028.")
+            ]
+        )
+    case .sprinterLegal:
+        return StatutoryInfoContent(
+            title: "Sprinter-Option (Vorzeitiger Austritt)",
+            subtitle: "Sprinter-Prämie & frühere Beendigung",
+            sections: [
+                ("Funktionsweise",
+                 "Bei vorzeitigem Ausscheiden vor Ablauf der Kündigungsfrist wird eine zusätzliche Prämie (Faktor × Monatsbrutto × Fristmonate) angesetzt; gleichzeitig entfallen reguläre Gehaltsmonate und es können Ruhens- bzw. Sperrzeiten greifen.")
+            ]
+        )
+    case .alg1Rules:
+        return StatutoryInfoContent(
+            title: "Sprinter: Ruhenszeit, Sperrzeit & Abfindungs-Anteil",
+            subtitle: "§§ 143a, 159 SGB III · Alter, Betriebszugehörigkeit & 9M ALG 1",
+            sections: [
+                ("1. Ruhenszeit (§ 143a SGB III)",
+                 "Greift bei vorzeitigem Austritt (Sprinter) mit Abfindung, wenn das Arbeitsverhältnis ohne Abfindung erst nach Ablauf der regulären Kündigungsfrist (fristMonate, z. B. 5 Monate) geendet hätte. Während der Ruhenszeit ruht der ALG-1-Anspruch (0 € ALG 1), da eine Doppelzahlung parallel zur fiktiven Kündigungsfrist vermieden werden soll. Bei freiwilliger GKV/PKV fallen laufende Beiträge an (bei Pflicht-GKV greift i. d. R. der 1-Monats-Nachlauf nach § 19 Abs. 2 SGB V)."),
+                ("2. Sperrzeit (§ 159 SGB III) & Zusammenspiel mit der Ruhenszeit",
+                 "Bei freiwilligem Ausscheiden oder Aufhebungsvertrag ohne wichtigen Grund kann eine Sperrzeit von regelmäßig 12 Wochen (ca. 3 Monaten) eintreten.\n• Gleichzeitiger Ablauf statt einfacher Addition: Die Sperrzeit beginnt ab dem Austritt und läuft bei einer längeren Ruhenszeit (z. B. 5 Monate Kündigungsfrist) parallel / überlappend innerhalb der ersten Monate ab — sie wird also nicht pauschal als weitere 3 Monate oben auf die 5 Monate addiert.\n• Anspruchskürzung (z. B. 12M → 9M): Durch die Sperrzeit verkürzt sich jedoch die gesamte ALG-1-Bezugsdauer entsprechend (aus einem 12-monatigen Anspruch werden 9 Monate ALG 1 nach Ablauf der Start-/Ruhensphase)."),
+                ("3. Abfindungs-Anteil nach Alter & Jahren im Job",
+                 "Je nach Lebensalter und Dauer der Betriebszugehörigkeit (Jahre im Job) wird im Modell nur ein bestimmter Prozentsatz der Abfindung für die Sprinter-Überbrückung angesetzt — nicht zwingend 100 %:\n• < 5 Jahre im Job: < 50 J. ~50 % · 50–54 J. ~60 % · 55+ J. ~70 %\n• 5–14 Jahre im Job: < 50 J. ~65 % · 50–54 J. ~75 % · 55+ J. ~85 %\n• 15+ Jahre im Job: < 50 J. ~80 % · 50–54 J. ~90 % · 55+ J. 100 %"),
+                ("Hinweis (§ 2 StBerG)",
+                 "Unverbindliche Orientierungstabelle und Modellrechnung (keine Rechts- oder Steuerberatung). Maßgeblich im Einzelfall sind Vereinbarung/Sozialplan sowie der Bescheid der Agentur für Arbeit.")
+            ]
+        )
+    case .reichweiteLogic:
+        return StatutoryInfoContent(
+            title: "Reichweite: Abfindungs-Puffer & Mindestzeit-Logik",
+            subtitle: "Cash-Burn-Phasen, 3-Monats-Minimum & 9M ALG 1",
+            sections: [
+                ("1. Day-0 Einmalabfluss",
+                 "Einmalabflüsse (Day-0, z. B. Kredit/Puffer oder Rürup) werden sofort zu Beginn abgezogen."),
+                ("2. Sprinter-/Sperrphase & Vergleich mit Kündigungsfrist / 3-Monats-Sperrzeit",
+                 "Der verbleibende Netto-Puffer überbrückt die anfängliche Sprinter-/Sperrphase anhand Ihres monatlichen Netto-Vergleichsgehalts (dem Netto, das Sie anstelle einer regulären Beschäftigung in der Kündigungsfrist erhalten).\n• Weniger als 3 Monate Puffer (< 3 Mon.): Reicht der rechnerische Puffer aus dem Abfindungs-/Sprinter-Betrag für weniger als die 3-monatige Sperrzeit, wird das Minimum aus beiden Zeiträumen angesetzt.\n• Mehr als Kündigungsfrist (> fristMonate): Deckt der rechnerische Puffer mehr Monate ab als Ihre Kündigungsfrist (z. B. > 5 Monate), bleibt der volle Überschuss im Konto-Cash erhalten und verlängert die spätere Reichweite — die Startphase wird nicht künstlich verkürzt."),
+                ("3. ALG-1-Phase (z. B. 9M) & Privatier-Phase",
+                 "Nach der anfänglichen Sprinter-/Ruhensphase starten die verbleibenden ALG-1-Monate (bei 12 Monaten Anspruch abzüglich 3 Monaten Sperrzeit: 9 Monate ALG 1) mit einer monatlichen Netto-Entnahme von (Monatsausgaben − ALG 1 Netto). Nach Ablauf von ALG 1 folgt die reine Privatier-Phase mit einer monatlichen Entnahme von (Monatsausgaben + GKV nach ALG 1) bis das Kapital aufgebraucht ist (zuzüglich FA-Erstattung Okt. 2028 und Real-Zins)."),
+                ("Hinweis (§ 2 StBerG)",
+                 "Unverbindliche Modellrechnung auf Basis der Rechengrößen 2027. Keine Steuer- oder Rechtsberatung.")
+            ]
+        )
+    case .solverModes:
+        return StatutoryInfoContent(
+            title: "Optimierungs-Modi",
+            subtitle: "Manuell, Liquidität, Optimal-Netto & Altersvorsorge",
+            sections: [
+                ("Modi im Überblick",
+                 "Wählt eine Zielgewichtung für bAV (§ 3 Nr. 63), Rürup (§ 10), DRV V0210 und PV-IAB (§ 7g) oder erlaubt die freie manuelle Einstellung.")
+            ]
+        )
+    case .bav63:
+        return StatutoryInfoContent(
+            title: "betriebliche Altersversorgung (§ 3 Nr. 63 EStG)",
+            subtitle: "Steuer- und sozialabgabenbegünstigte Entgeltumwandlung",
+            sections: [
+                ("Wirkung",
+                 "Reduziert das steuer- und beitragspflichtige Einkommen im Rahmen der gesetzlichen Höchstgrenzen und senkt den Sofort-Abzug.")
+            ]
+        )
+    case .ruerup10:
+        return StatutoryInfoContent(
+            title: "Rürup / Basisrente (§ 10 Abs. 3 EStG)",
+            subtitle: "Sonderausgabenabzug & Kapitalbindung",
+            sections: [
+                ("Wirkung & Bindung",
+                 "Senkt das zu versteuernde Einkommen bis zum gemeinsamen/individuellen Höchstbetrag (abzüglich RV-Beiträge). Das eingezahlte Kapital ist lebenslang als Rente gebunden.")
+            ]
+        )
+    case .drvV0210:
+        return StatutoryInfoContent(
+            title: "DRV-Ausgleichszahlung (V0210)",
+            subtitle: "Rentenabschläge ausgleichen",
+            sections: [
+                ("Wirkung",
+                 "Ermöglicht den Ausgleich von Rentenminderungen und wird im Modell mit den entsprechenden steuerlichen Regeln abgebildet.")
+            ]
+        )
+    case .pvIab7g:
+        return StatutoryInfoContent(
+            title: "Investitionsabzugsbetrag (§ 7g EStG)",
+            subtitle: "50 % Abzug auf geplante Anschaffungen (z. B. PV)",
+            sections: [
+                ("Wirkung",
+                 "Mindert das zu versteuernde Einkommen 2027 um bis zu 50 % der geplanten Anschaffungskosten ohne sofortigen Cash-Abfluss im Jahr 2027 (Investitionsfrist beachten).")
+            ]
+        )
+    case .postAlg1Gkv:
+        return StatutoryInfoContent(
+            title: "Krankenversicherung nach ALG 1",
+            subtitle: "Mindestbeitrag, Familienversicherung oder individuell",
+            sections: [
+                ("Monatliche Kosten",
+                 "Nach Ende des ALG-1-Bezugs fallen laufende Kranken- und Pflegeversicherungsbeiträge an, sofern keine Familienversicherung greift.")
+            ]
+        )
+    case .liquidityTimeline:
+        return StatutoryInfoContent(
+            title: "Liquiditäts-Zeitstrahl 2027 / 2028",
+            subtitle: "Sofort-Netto 2027, Einkommen 2027 & FA-Erstattung 2028",
+            sections: [
+                ("Zeitlicher Ablauf",
+                 "Trennt den unmittelbaren Netto-Zufluss 2027 von der Einkommensteuerveranlagung (Erstattung/Nachzahlung) im Folgejahr.")
+            ]
+        )
+    }
+}
+
+struct InfoIconButton: View {
+    let topic: StatutoryTopic
+    @Binding var selectedTopic: StatutoryTopic?
+
+    var body: some View {
+        Button {
+            selectedTopic = topic
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.blue)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Weitere Informationen")
+    }
+}
+
+struct StatutoryInfoSheetView: View {
+    let topic: StatutoryTopic
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let content = infoContent(for: topic)
+        NavigationStack {
+            List {
+                Section {
+                    Text(content.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(Array(content.sections.enumerated()), id: \.offset) { _, sec in
+                    Section(sec.heading) {
+                        Text(sec.body)
+                            .font(.footnote)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .navigationTitle(content.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Fertig") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Domain Models
 
 enum PreExitGkvStatus: String, CaseIterable, Identifiable, Codable {
@@ -68,8 +292,8 @@ enum PostAlg1GkvMode: String, CaseIterable, Identifiable, Codable {
 
     var displayName: String {
         switch self {
-        case .mindestbeitrag: return "Mindest (~280 €)"
-        case .familienversicherung: return "Familie (0 €)"
+        case .mindestbeitrag: return "Mindest ~280 €"
+        case .familienversicherung: return "Familie 0 €"
         case .individuell: return "Individuell"
         }
     }
@@ -292,6 +516,7 @@ struct SimulationResult {
     var waterfallSteps: [WaterfallStep] = []
 
     // Section C: Reichweite
+    var effectivePostGkvMonthly: Double = 280
     var standardRunwayMonths: Double = 0
     var sprinterRunwayMonths: Double = 0
     var standardDepletionDate: String = "–"
@@ -317,7 +542,7 @@ struct SimulationResult {
 // MARK: - 2027 Statutory German Tax, § 32b Progressionsvorbehalt, Solver & Runway Engine
 
 final class TaxEngineHost: ObservableObject {
-    private static let storageKey = "abfindungspilot_input_v27_2"
+    private static let storageKey = "abfindungspilot_input_v27_2_1"
 
     @Published var input: SimulationInput {
         didSet {
@@ -475,7 +700,6 @@ final class TaxEngineHost: ObservableObject {
         isSplitting ? 2.0 * calcSingleTariff2027(zve / 2.0) : calcSingleTariff2027(zve)
     }
 
-    /// § 32b Abs. 2 EStG besonderer Steuersatz applied to taxable `zve` when tax-free income replacements (`progressionIncome`) exist.
     private func calcProgressionTariff2027(zve: Double, progressionIncome: Double, isSplitting: Bool) -> Double {
         let cleanZve = max(0, zve)
         let prog = max(0, progressionIncome)
@@ -616,7 +840,6 @@ final class TaxEngineHost: ObservableObject {
         return sprinter ? preExit : min(12, preExit + inp.fristMonate)
     }
 
-    /// Month-by-month 2027 (`1...12`) timeline for Alt-AG, Ruhenszeit, Sperrzeit (~3M), ALG-1 (§ 32b), and Neu-Job.
     private func compute2027Timeline(for inp: SimulationInput, sprinter: Bool) -> (
         oldMonths: Int,
         oldGross: Double,
@@ -675,6 +898,14 @@ final class TaxEngineHost: ObservableObject {
         return monthlyBbgKv * (0.146 + input.kvZusatzbeitragPct / 100.0 + pvTotal)
     }
 
+    private func currentPostAlg1GkvMonthly() -> Double {
+        switch input.postAlg1GkvMode {
+        case .mindestbeitrag: return 280
+        case .familienversicherung: return 0
+        case .individuell: return max(0, input.customPostGkvMonthly)
+        }
+    }
+
     private func monthlyAlg1Net() -> Double {
         let cappedAnnual = min(input.altesMonatsgehalt * 12.0, bbgRvYear)
         if cappedAnnual <= 0 { return 0 }
@@ -690,6 +921,7 @@ final class TaxEngineHost: ObservableObject {
 
     func recalculate() {
         var r = SimulationResult()
+        r.effectivePostGkvMonthly = currentPostAlg1GkvMonthly()
 
         let tl = compute2027Timeline(for: input, sprinter: input.turboEnabled)
         let totalGross = tl.oldGross + tl.newGross
@@ -1081,13 +1313,7 @@ final class TaxEngineHost: ObservableObject {
 
     private func computeReichweite(into r: inout SimulationResult, partnerZve: Double, effBav: Double, effDrv: Double, effRuerup: Double, effPv: Double) {
         let alg1 = monthlyAlg1Net()
-        let postGkv: Double = {
-            switch input.postAlg1GkvMode {
-            case .mindestbeitrag: return 280
-            case .familienversicherung: return 0
-            case .individuell: return input.customPostGkvMonthly
-            }
-        }()
+        let postGkv = currentPostAlg1GkvMonthly()
         let netSalMonthly = annualNetSalary(
             annualGross: input.altesMonatsgehalt * 12.0,
             isSplitting: useSplittingForPayroll,
@@ -1134,8 +1360,18 @@ final class TaxEngineHost: ObservableObject {
             ).totalTax
             let faSettlement = (baseTax + taxPay) - finalTax
 
+            // Day-0 upfront spend deducted right at the beginning
             var cash = max(0, sofort - effRuerup - input.upfrontSpend2027)
+
             let noticePhase = isSprinter ? 0 : input.fristMonate
+            let severanceBridgeMonths = netSalMonthly > 0 ? max(0, Int((cash / netSalMonthly).rounded(.down))) : 0
+            let sprinterBridgeMonths: Int = {
+                guard isSprinter else { return 0 }
+                if sperr > 0 && severanceBridgeMonths < sperr {
+                    return min(severanceBridgeMonths, sperr)
+                }
+                return input.fristMonate
+            }()
             let alg1Dur = max(0, input.alg1ClaimMonths - sperr)
 
             var series: [Double] = [cash]
@@ -1144,17 +1380,24 @@ final class TaxEngineHost: ObservableObject {
 
             for m in 1...72 {
                 if m == max(1, faOffset) { cash += faSettlement }
-                if m <= noticePhase {
-                    if input.includeSalarySurplus { cash += max(0, netSalMonthly - input.monthlyExpenses) }
-                } else if m <= noticePhase + ruhens {
-                    let gkvThisMonth = (input.preExitGkv == .pflicht && m == noticePhase + 1) ? 0 : voluntaryGkvMonthly()
-                    cash -= (input.monthlyExpenses + gkvThisMonth)
-                } else if m <= noticePhase + ruhens + sperr {
-                    cash -= (input.monthlyExpenses + postGkv)
-                } else if m <= noticePhase + ruhens + sperr + alg1Dur {
-                    cash -= max(0, input.monthlyExpenses - alg1)
+
+                if !isSprinter {
+                    if m <= noticePhase {
+                        if input.includeSalarySurplus { cash += max(0, netSalMonthly - input.monthlyExpenses) }
+                    } else if m <= noticePhase + alg1Dur {
+                        cash -= max(0, input.monthlyExpenses - alg1)
+                    } else {
+                        cash -= (input.monthlyExpenses + postGkv)
+                    }
                 } else {
-                    cash -= (input.monthlyExpenses + postGkv)
+                    if m <= sprinterBridgeMonths {
+                        let gkvThisMonth = (input.preExitGkv == .pflicht && m == 1) ? 0 : voluntaryGkvMonthly()
+                        cash -= max(0, input.monthlyExpenses - netSalMonthly + gkvThisMonth)
+                    } else if m <= sprinterBridgeMonths + alg1Dur {
+                        cash -= max(0, input.monthlyExpenses - alg1)
+                    } else {
+                        cash -= (input.monthlyExpenses + postGkv)
+                    }
                 }
 
                 if cash > 0 { cash *= (1.0 + monthlyRate) }
@@ -1166,16 +1409,19 @@ final class TaxEngineHost: ObservableObject {
             let endLabel = depletedMonth >= 72 ? "> 6 J." : formatMonthOffset(startOffset + Int(depletedMonth))
             var rawSegments: [(String, Double, Double)] = []
             var cursor = 0.0
-            if noticePhase > 0 {
-                let end = min(depletedMonth, cursor + Double(noticePhase))
-                rawSegments.append(("Gehalt/Frist", cursor, end))
-                cursor = end
-            }
-            if (ruhens + sperr) > 0 && cursor < depletedMonth {
-                let end = min(depletedMonth, cursor + Double(ruhens + sperr))
+
+            if !isSprinter {
+                if noticePhase > 0 {
+                    let end = min(depletedMonth, cursor + Double(noticePhase))
+                    rawSegments.append(("Gehalt/Frist", cursor, end))
+                    cursor = end
+                }
+            } else if sprinterBridgeMonths > 0 {
+                let end = min(depletedMonth, cursor + Double(sprinterBridgeMonths))
                 rawSegments.append(("Ruhenszeit", cursor, end))
                 cursor = end
             }
+
             if alg1Dur > 0 && cursor < depletedMonth {
                 let end = min(depletedMonth, cursor + Double(alg1Dur))
                 rawSegments.append(("ALG 1", cursor, end))
@@ -1196,7 +1442,8 @@ final class TaxEngineHost: ObservableObject {
                 )
             }
 
-            let alg1End = startOffset + noticePhase + ruhens + sperr + alg1Dur
+            let initialSpan = isSprinter ? sprinterBridgeMonths : noticePhase
+            let alg1End = startOffset + initialSpan + alg1Dur
             return (depletedMonth, alg1End, bridgeSafe, series, bars)
         }
 
@@ -1445,7 +1692,7 @@ struct MainTabContainerView: View {
         triggerLightHaptic()
         let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_v27_2_Report.pdf")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_v27_2_1_Report.pdf")
         let inp = engine.input
         let res = engine.result
 
@@ -1467,7 +1714,7 @@ struct MainTabContainerView: View {
         ]
 
         func drawHeader(pageTitle: String, pageNum: Int) {
-            "AbfindungsPilot 2027 (v27.2.0) – \(pageTitle)".draw(at: CGPoint(x: 36, y: 32), withAttributes: titleAttrs)
+            "AbfindungsPilot 2027 (v27.2.1) – \(pageTitle)".draw(at: CGPoint(x: 36, y: 32), withAttributes: titleAttrs)
             "Seite \(pageNum)".draw(at: CGPoint(x: 520, y: 36), withAttributes: footAttrs)
         }
 
@@ -1564,10 +1811,11 @@ struct MainTabContainerView: View {
                     drawHeader(pageTitle: "4. Reichweite & Cash-Burn", pageNum: pageCounter)
                     let p4 = """
                     • Monatl. Netto-Ausgaben: \(eur(inp.monthlyExpenses))  |  Einmal-Abfluss 2027: \(eur(inp.upfrontSpend2027))  |  ALG-1 Anspruch: \(inp.alg1ClaimMonths) Mon. (\(Int(inp.alg1SatzPct)) %)
+                    • GKV nach ALG 1: \(eur(res.effectivePostGkvMonthly))/Mo  |  Real-Zins / Inflation p.a.: \(pct(inp.realReturnPct))
                     • Standard (Frist): \(String(format: "%.0f", res.standardRunwayMonths)) Mon. (bis \(res.standardDepletionDate)) · Brücke Okt. 28: \(res.standardBridgeSafe ? "Sicher" : "Engpass")
                     • Sprinter (Sofort): \(String(format: "%.0f", res.sprinterRunwayMonths)) Mon. (bis \(res.sprinterDepletionDate)) · Brücke Okt. 28: \(res.sprinterBridgeSafe ? "Sicher" : "Engpass")
                     """
-                    p4.draw(in: CGRect(x: 36, y: 74, width: 523, height: 110), withAttributes: bodyAttrs)
+                    p4.draw(in: CGRect(x: 36, y: 74, width: 523, height: 125), withAttributes: bodyAttrs)
                     drawFooter()
                 }
 
@@ -1630,7 +1878,7 @@ struct SettingsAndPDFSheetView: View {
         case 2:
             return ("Ergebnis 2027 / 2028", "Zeigt AG-Einbehalt, § 34 Fünftelregelung, § 32b Wirkung, die FA-Erstattung im Oktober 2028 und den Liquiditäts-Zeitstrahl.")
         case 3:
-            return ("Reichweite / Cash-Burn", "Simuliert Ihre Liquiditätsreichweite ohne Job inklusive Ruhenszeit, ALG 1, GKV und Oktober-2028-Brücke.")
+            return ("Reichweite / Cash-Burn", "Simuliert Ihre Liquiditätsreichweite ohne Job inklusive Puffer-/Mindestzeitlogik, 9M ALG 1, GKV und Oktober-2028-Brücke.")
         default:
             return ("Job-Switch", "Vergleicht den Vermögensverlauf bei Gehaltswechsel inklusive Startpause und Break-Even-Punkt.")
         }
@@ -1650,7 +1898,7 @@ struct SettingsAndPDFSheetView: View {
                     .padding(.vertical, 2)
                 }
 
-                Section("A4 PDF-Report (Mehrseitig)") {
+                Section("A4 PDF-Report (Mehrseitig · v27.2.1)") {
                     Text("Seiten 1–3 (Eingaben, Steuer, Ergebnis) sind immer enthalten:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1763,12 +2011,14 @@ struct CompactSliderRow: View {
                         Text(subtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Spacer(minLength: 6)
                 Text(valueFormatter(value))
                     .font(.subheadline.bold())
                     .monospacedDigit()
+                    .lineLimit(1)
             }
             Slider(value: $value, in: range, step: step)
                 .controlSize(.small)
@@ -2079,10 +2329,18 @@ struct InputsTabView: View {
 
             Section {
                 Toggle(isOn: $engine.input.turboEnabled) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         Text("Sprinter-Option (Sofort-Austritt)")
                             .font(.subheadline.weight(.medium))
-                        InfoIconButton(topic: .sprinterLegal, selectedTopic: $selectedInfoTopic)
+                        Button {
+                            selectedInfoTopic = .alg1Rules
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                                .font(.subheadline)
+                                .foregroundStyle(.orange)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Regeln zu Ruhenszeit, Sperrzeit und Abfindungs-Anteil")
                     }
                 }
                 .tint(.orange)
@@ -2099,10 +2357,14 @@ struct InputsTabView: View {
                     )
 
                     Toggle(isOn: $engine.input.includeAlg1Loss) {
-                        HStack(spacing: 4) {
+                        VStack(alignment: .leading, spacing: 1) {
                             Text("ALG-1 Sperrzeit abziehen (max. 12 Wo.)")
                                 .font(.subheadline.weight(.medium))
-                            InfoIconButton(topic: .alg1Rules, selectedTopic: $selectedInfoTopic)
+                            Text(engine.input.includeAlg1Loss
+                                 ? "Sperrzeit aktiv → \(max(0, engine.input.alg1ClaimMonths - 3)) Mon. ALG 1 nach Puffer"
+                                 : "Ohne Sperrzeit → \(engine.input.alg1ClaimMonths) Mon. ALG 1 nach Ruhenszeit")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -2791,10 +3053,20 @@ struct ReichweiteTabView: View {
         return ("Gleichstand", .secondary)
     }
 
+    private var realRateExplanation: String {
+        if engine.input.realReturnPct > 0.05 {
+            return "Realrendite nach Inflation: Guthaben wächst real über der Inflation (+) → verlängert die Reichweite."
+        } else if engine.input.realReturnPct < -0.05 {
+            return "Realverlust durch Inflation: Kaufkraftverlust übersteigt den Zins (−) → verkürzt die Reichweite."
+        } else {
+            return "Real-Zins / Inflation p.a. (Rendite minus Inflation): (+) verlängert Reichweite, (−) verkürzt sie."
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text("PARAMETER · ÜBERLEBEN OHNE JOB")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
@@ -2808,7 +3080,7 @@ struct ReichweiteTabView: View {
                     )
 
                     CompactSliderRow(
-                        title: "Einmal-Abfluss 2027 (Kredit/Puffer)",
+                        title: "Einmal-Abfluss 2027 (Day-0)",
                         selectedInfoTopic: $selectedInfoTopic,
                         value: $engine.input.upfrontSpend2027,
                         range: 0...80_000,
@@ -2819,6 +3091,7 @@ struct ReichweiteTabView: View {
                         HStack {
                             Text("ALG-1 Anspruch (\(Int(engine.input.alg1SatzPct)) %)")
                                 .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
                             Spacer()
                             Text("\(engine.input.alg1ClaimMonths) Mon.")
                                 .font(.subheadline.bold())
@@ -2826,18 +3099,26 @@ struct ReichweiteTabView: View {
                         }
                     }
 
-                    HStack {
-                        Text("GKV nach ALG 1")
-                            .font(.subheadline.weight(.medium))
-                        InfoIconButton(topic: .postAlg1Gkv, selectedTopic: $selectedInfoTopic)
-                        Spacer()
-                        Picker("", selection: $engine.input.postAlg1GkvMode) {
-                            ForEach(PostAlg1GkvMode.allCases) { m in
-                                Text(m.displayName).tag(m)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 8) {
+                            Text("GKV nach ALG 1")
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
+                            InfoIconButton(topic: .postAlg1Gkv, selectedTopic: $selectedInfoTopic)
+                            Spacer(minLength: 8)
+                            Picker("", selection: $engine.input.postAlg1GkvMode) {
+                                ForEach(PostAlg1GkvMode.allCases) { m in
+                                    Text(m.displayName).tag(m)
+                                }
                             }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .lineLimit(1)
                         }
-                        .labelsHidden()
-                        .pickerStyle(.menu)
+                        Text("Angesetzter Beitrag nach ALG 1: \(eur(engine.result.effectivePostGkvMonthly))/Mo")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
 
                     if engine.input.postAlg1GkvMode == .individuell {
@@ -2853,6 +3134,7 @@ struct ReichweiteTabView: View {
 
                     CompactSliderRow(
                         title: "Real-Zins / Inflation p.a.",
+                        subtitle: realRateExplanation,
                         selectedInfoTopic: $selectedInfoTopic,
                         value: $engine.input.realReturnPct,
                         range: -3.0...6.0,
@@ -2873,9 +3155,18 @@ struct ReichweiteTabView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 8) {
-                    HStack {
+                    HStack(spacing: 5) {
                         Text("Lebensphasen-Zeitstrahl")
                             .font(.subheadline.weight(.semibold))
+                        Button {
+                            selectedInfoTopic = .reichweiteLogic
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                                .font(.subheadline)
+                                .foregroundStyle(.blue)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Logik zu Abfindungs-Puffer, Mindestzeit und ALG 1")
                         Spacer()
                         Text(winnerPill.text)
                             .font(.caption2.bold())
