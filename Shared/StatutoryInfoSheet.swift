@@ -1,194 +1,176 @@
 import SwiftUI
 
+// MARK: - Statutory Info Topics & Sheet
+
 enum StatutoryTopic: String, Identifiable {
     case recht2027
-    case agFiktiv
-    case preExitGkv
-    case postAlg1Gkv
     case tarifSplitting
+    case preExitGkv
+    case agFiktiv
     case sprinterLegal
     case alg1Rules
+    case reichweiteLogic
     case solverModes
     case bav63
     case ruerup10
     case drvV0210
     case pvIab7g
+    case postAlg1Gkv
     case liquidityTimeline
 
     var id: String { rawValue }
+}
 
-    var title: String {
-        switch self {
-        case .recht2027:         return "Rechengrößen & Recht 2027"
-        case .agFiktiv:          return "AG-Fiktivgehalt & Lohnsteuerabzug"
-        case .preExitGkv:        return "GKV-Status vor Austritt (§ 19 SGB V)"
-        case .postAlg1Gkv:       return "Freiwillige GKV nach ALG 1"
-        case .tarifSplitting:    return "Grund- vs. Splittingtarif"
-        case .sprinterLegal:     return "Sprinterprämie (§ 34 EStG)"
-        case .alg1Rules:         return "ALG 1: Ruhenszeit vs. Sperrzeit"
-        case .solverModes:       return "Auto-Solver Optimierungs-Modi"
-        case .bav63:             return "bAV-Umwandlung (§ 3 Nr. 63 EStG)"
-        case .ruerup10:          return "Rürup-Rente / Basisrente"
-        case .drvV0210:          return "DRV-Ausgleich (§ 187a SGB VI / V0210)"
-        case .pvIab7g:           return "PV-IAB (§ 7g EStG)"
-        case .liquidityTimeline: return "Konto-Cash vs. Buch-Effekte"
-        }
-    }
+private struct StatutoryInfoContent {
+    let title: String
+    let subtitle: String
+    let sections: [(heading: String, body: String)]
+}
 
-    var badge: String {
-        switch self {
-        case .recht2027:         return "Rechtsstand 2027"
-        case .agFiktiv:          return "Wachstumschancengesetz"
-        case .preExitGkv:        return "§ 19 Abs. 2 SGB V"
-        case .postAlg1Gkv:       return "§ 240 SGB V (Privatier)"
-        case .tarifSplitting:    return "§ 32a / § 34 EStG"
-        case .sprinterLegal:     return "§ 24 Nr. 1a & § 34 EStG"
-        case .alg1Rules:         return "§§ 148, 158, 159 SGB III"
-        case .solverModes:       return "4 Strategien im Vergleich"
-        case .bav63:             return "§ 3 Nr. 63 S. 1 & S. 3 EStG"
-        case .ruerup10:          return "§ 10 Abs. 1 Nr. 2 & Abs. 3 EStG"
-        case .drvV0210:          return "§ 3 Nr. 28 EStG & V0210"
-        case .pvIab7g:           return "§ 7g EStG (50 % Abzug)"
-        case .liquidityTimeline: return "Cash-Flow-Logik 2027/2028"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .sprinterLegal, .tarifSplitting:
-            return "exclamationmark.triangle.fill"
-        case .recht2027:
-            return "scale.3d"
-        case .solverModes:
-            return "wand.and.stars"
-        default:
-            return "info.circle.fill"
-        }
-    }
-
-    var accentColor: Color {
-        switch self {
-        case .sprinterLegal, .tarifSplitting:
-            return .orange
-        case .bav63, .ruerup10, .drvV0210, .pvIab7g, .solverModes:
-            return .green
-        default:
-            return .blue
-        }
-    }
-
-    var summary: String {
-        switch self {
-        case .recht2027:
-            return "Alle Berechnungen basieren auf den gesetzlichen Rechengrößen und Steuertarifen für das Veranlagungsjahr 2027."
-        case .agFiktiv:
-            return "Seit dem Wachstumschancengesetz wendet der Arbeitgeber beim Lohnsteuerabzug keine Fünftelregelung mehr an."
-        case .preExitGkv:
-            return "Ihr Versicherungsstatus vor dem Austritt bestimmt, ob während einer Ruhenszeit im 1. Monat kostenfreier Schutz greift."
-        case .postAlg1Gkv:
-            return "Nach Ablauf von ALG 1 wechseln Sie ohne neuen Job i. d. R. in die freiwillige GKV oder die kostenfreie Familienversicherung."
-        case .tarifSplitting:
-            return "Bei Zusammenveranlagung kann eine hohe Abfindung die Progression so anheben, dass Einzelveranlagung günstiger ist (Fünftel-Falle)."
-        case .sprinterLegal:
-            return "Damit die Sprinterprämie ebenfalls nach der Fünftelregelung (§ 34 EStG) ermäßigt besteuert wird, gelten zwei strenge Voraussetzungen."
-        case .alg1Rules:
-            return "Beim Aufhebungsvertrag unterscheiden sich Ruhenszeit (Verschiebung) und Sperrzeit (echte Anspruchskürzung) grundlegend."
-        case .solverModes:
-            return "Der Auto-Solver stellt alle vier Steuer-Hebel automatisch auf Ihr Ziel ein. Sobald Sie einen Regler bewegen, wechselt er nahtlos auf Manuell — ohne die übrigen Werte zurückzusetzen."
-        case .bav63:
-            return "Direktumwandlung aus der Abfindung in eine betriebliche Altersversorgung spart sofort 2027 Lohnsteuer."
-        case .ruerup10:
-            return "Beiträge zur Basisrente senken das Basiseinkommen vor der Fünftelung und lösen dadurch einen überproportionalen Steuerhebel aus."
-        case .drvV0210:
-            return "Direktzahlung des Arbeitgebers in die gesetzliche Rentenversicherung zum Ausgleich von Rentenabschlägen."
-        case .pvIab7g:
-            return "Für eine geplante gewerbliche Photovoltaik-Anlage können 50 % der geplanten Anschaffungskosten bereits 2027 abgezogen werden."
-        case .liquidityTimeline:
-            return "Der Liquiditäts-Zeitstrahl trennt echten Kontostand (31.12.2027 & Ende 2028) von reinen Buch- oder Opportunitätseffekten."
-        }
-    }
-
-    var bullets: [String] {
-        switch self {
-        case .recht2027:
-            return [
-                "Einkommensteuer 2027 (§ 32a EStG): Grundfreibetrag 12.564 € (Splitting 25.128 €), 42 %-Spitzensteuersatz ab 70.600 € (Splitting 141.200 €), Reichensteuer 45 % ab 285.000 €.",
-                "Kinderfreibetrag 2027 (§§ 31–32 EStG): 10.056 € pro Kind (7.128 € KFB + 2.928 € BEA) vs. 3.204 € Kindergeld (0,5-Schritte unterstützt).",
-                "Solidaritätszuschlag & Kirchensteuer: Soli-Freigrenze 19.450 € ESt (Einzel) bzw. 38.900 € (Splitting); Kirchensteuer 8 % (BY/BW) oder 9 % (§ 51a EStG).",
-                "Beitragsbemessungsgrenzen 2027: BBG-RV/ALV 106.200 €/Jahr (8.850 €/Mo); BBG-KV/PV 76.500 €/Jahr (6.375 €/Mo).",
-                "R 34.2 Abs. 1 EStR (Negativer Überlauf): Übersteigen Sonderausgaben das Basiseinkommen, mindert der Überhang direkt die Abfindung vor der Fünftelung."
+private func infoContent(for topic: StatutoryTopic) -> StatutoryInfoContent {
+    switch topic {
+    case .recht2027:
+        return StatutoryInfoContent(
+            title: "Gesetzliche Parameter 2027",
+            subtitle: "EStG §§ 32a, 32b, 34, 10, 7g · SGB III & SGB V",
+            sections: [
+                ("Einkommensteuer 2027 (§ 32a EStG)",
+                 "Grundfreibetrag 12.564 € (Splitting: 25.128 €), Spitzensteuersatz 42 % ab 70.600 € und 45 % ab 285.000 € (Einzelveranlagung)."),
+                ("Fünftelregelung (§ 34 EStG) & § 32b EStG",
+                 "Tarifermäßigung für außerordentliche Einkünfte (Abfindung). Lohnersatzleistungen wie ALG 1 in 2027 fließen über den besonderen Steuersatz (§ 32b Abs. 2 EStG) in die Progression ein."),
+                ("Hinweis (§ 2 StBerG)",
+                 "Unverbindliche Modellrechnung auf Basis der Rechengrößen 2027. Keine Steuer- oder Rechtsberatung.")
             ]
-        case .agFiktiv:
-            return [
-                "Der Arbeitgeber versteuert die Abfindung bei Auszahlung anhand Ihres hochgerechneten Jahresgehalts zum vollen progressiven Tarif.",
-                "Dadurch fällt das Sofort-Netto zunächst niedriger aus als die endgültige Steuerlast.",
-                "Die Steuerersparnis aus der Fünftelregelung holen Sie sich über die Einkommensteuererklärung 2028 vom Finanzamt zurück."
+        )
+    case .tarifSplitting:
+        return StatutoryInfoContent(
+            title: "Grundtarif vs. Ehegattensplitting",
+            subtitle: "§ 32a Abs. 5 EStG · Partnergehalt & § 34",
+            sections: [
+                ("Wirkung auf die Abfindung",
+                 "Beim Splittingtarif wird das gemeinsame zvE halbiert und der Tarif verdoppelt. Je nach Partnergehalt und Fünftelregelung kann der Abfindungsvorteil gegenüber dem Grundtarif höher oder geringer ausfallen.")
             ]
-        case .preExitGkv:
-            return [
-                "Pflicht GKV vor Austritt: Nach § 19 Abs. 2 SGB V besteht nach Ende der Beschäftigung für bis zu 1 Monat ein kostenfreier nachgehender Leistungsanspruch (0 € GKV/PV im 1. Ruhens-Monat).",
-                "Freiwillig GKV vor Austritt: Der nachgehende Leistungsanspruch greift nicht — der freiwillige GKV/PV-Höchstsatz (~1.320 €/Mo bei 2,5 % Zusatzbeitrag) fällt ab Tag 1 der Ruhenszeit an.",
-                "Freiwillige GKV/PV-Beiträge sind nach § 10 EStG voll als Sonderausgaben absetzbar."
+        )
+    case .preExitGkv:
+        return StatutoryInfoContent(
+            title: "GKV / PKV vor Austritt & Ruhenszeit",
+            subtitle: "SGB V · Nachlauf & freiwillige Beiträge",
+            sections: [
+                ("Pflicht-GKV vs. Freiwillig / PKV",
+                 "Bei Pflichtversicherten greift im ersten Monat nach Beschäftigungsende häufig der gesetzliche Nachlauf (§ 19 Abs. 2 SGB V), bevor ggf. freiwillige Beiträge anfallen.")
             ]
-        case .postAlg1Gkv:
-            return [
-                "Mindest (~280 €): Gilt für freiwillig Versicherte ohne laufende steuerpflichtige Einkünfte (reiner Vermögensverzehr aus der Abfindung ist beitragsfrei).",
-                "Kapitalerträge & Mieten: Zinsen, Dividenden und Mieteinnahmen werden ab dem ersten Euro (ohne Sparer-Pauschbetrag) bis zur BBG verbeitragt — wählen Sie dafür 'Individuell'.",
-                "Familie (0 €): Kostenfreie Familienversicherung, wenn der Ehepartner gesetzlich versichert ist und das eigene Gesamteinkommen unter der monatlichen Einkommensgrenze bleibt."
+        )
+    case .agFiktiv:
+        return StatutoryInfoContent(
+            title: "AG-Fiktivgehalt (Lohnsteuer-Einbehalt 2027)",
+            subtitle: "Vorläufiger Lohnsteuerabzug beim Arbeitgeber",
+            sections: [
+                ("Auto-Default vs. Manuell",
+                 "Ohne eigenen Eingabewert wird ein sinnvoller Richtwert aus dem Gehalt 2027 abgeleitet. Der endgültige Ausgleich erfolgt über die Einkommensteuerveranlagung 2028.")
             ]
-        case .tarifSplitting:
-            return [
-                "Dauernd getrennt lebende Ehegatten müssen zwingend den Grundtarif (Einzel-Rürup-Limit 32.308 €) wählen.",
-                "Bei Zusammenveranlagung (Splitting-Rürup-Limit 64.616 €) zeigt das Banner direkt den Euro-Vorteil bzw. die Fünftel-Falle gegenüber dem Grundtarif."
+        )
+    case .sprinterLegal:
+        return StatutoryInfoContent(
+            title: "Sprinter-Option (Vorzeitiger Austritt)",
+            subtitle: "Sprinter-Prämie & frühere Beendigung",
+            sections: [
+                ("Funktionsweise",
+                 "Bei vorzeitigem Ausscheiden vor Ablauf der Kündigungsfrist wird eine zusätzliche Prämie (Faktor × Monatsbrutto × Fristmonate) angesetzt; gleichzeitig entfallen reguläre Gehaltsmonate und es können Ruhens- bzw. Sperrzeiten greifen.")
             ]
-        case .sprinterLegal:
-            return [
-                "Einheitliche Entschädigung (§ 24 Nr. 1a EStG): Die Sprinterprämie muss im selben Aufhebungsvertrag als Ausgleich für den vorzeitigen Arbeitsplatzverlust vereinbart sein.",
-                "Zusammenballung von Einkünften: Basis-Abfindung und Sprinterprämie müssen vollständig im selben Kalenderjahr (2027) zufließen.",
-                "Eine Verteilung der Auszahlung auf zwei Kalenderjahre (z. B. 2026 und 2027) zerstört die Fünftelregelung für die gesamte Abfindung."
+        )
+    case .alg1Rules:
+        return StatutoryInfoContent(
+            title: "Sprinter: Ruhenszeit, Sperrzeit & Abfindungs-Anteil",
+            subtitle: "§§ 143a, 159 SGB III · Alter, Betriebszugehörigkeit & 9M ALG 1",
+            sections: [
+                ("1. Ruhenszeit (§ 143a SGB III)",
+                 "Greift bei vorzeitigem Austritt (Sprinter) mit Abfindung, wenn das Arbeitsverhältnis ohne Abfindung erst nach Ablauf der regulären Kündigungsfrist (fristMonate, z. B. 5 Monate) geendet hätte. Während der Ruhenszeit ruht der ALG-1-Anspruch (0 € ALG 1), da eine Doppelzahlung parallel zur fiktiven Kündigungsfrist vermieden werden soll. Bei freiwilliger GKV/PKV fallen laufende Beiträge an (bei Pflicht-GKV greift i. d. R. der 1-Monats-Nachlauf nach § 19 Abs. 2 SGB V)."),
+                ("2. Sperrzeit (§ 159 SGB III) & Zusammenspiel mit der Ruhenszeit",
+                 "Bei freiwilligem Ausscheiden oder Aufhebungsvertrag ohne wichtigen Grund kann eine Sperrzeit von regelmäßig 12 Wochen (ca. 3 Monaten) eintreten.\n• Gleichzeitiger Ablauf statt einfacher Addition: Die Sperrzeit beginnt ab dem Austritt und läuft bei einer längeren Ruhenszeit (z. B. 5 Monate Kündigungsfrist) parallel / überlappend innerhalb der ersten Monate ab — sie wird also nicht pauschal als weitere 3 Monate oben auf die 5 Monate addiert.\n• Anspruchskürzung (z. B. 12M → 9M): Durch die Sperrzeit verkürzt sich jedoch die gesamte ALG-1-Bezugsdauer entsprechend (aus einem 12-monatigen Anspruch werden 9 Monate ALG 1 nach Ablauf der Start-/Ruhensphase)."),
+                ("3. Abfindungs-Anteil nach Alter & Jahren im Job",
+                 "Je nach Lebensalter und Dauer der Betriebszugehörigkeit (Jahre im Job) wird im Modell nur ein bestimmter Prozentsatz der Abfindung für die Sprinter-Überbrückung angesetzt — nicht zwingend 100 %:\n• < 5 Jahre im Job: < 50 J. ~50 % · 50–54 J. ~60 % · 55+ J. ~70 %\n• 5–14 Jahre im Job: < 50 J. ~65 % · 50–54 J. ~75 % · 55+ J. ~85 %\n• 15+ Jahre im Job: < 50 J. ~80 % · 50–54 J. ~90 % · 55+ J. 100 %"),
+                ("Hinweis (§ 2 StBerG)",
+                 "Unverbindliche Orientierungstabelle und Modellrechnung (keine Rechts- oder Steuerberatung). Maßgeblich im Einzelfall sind Vereinbarung/Sozialplan sowie der Bescheid der Agentur für Arbeit.")
             ]
-        case .alg1Rules:
-            return [
-                "Ruhenszeit (§ 158 SGB III): Bei Verkürzung der Kündigungsfrist ruht die Auszahlung höchstens für die Dauer der abgekauften Frist — es gehen 0 Anspruchstage verloren.",
-                "Sperrzeit (§§ 148, 159 SGB III): Ein Aufhebungsvertrag ohne wichtigen Grund führt i. d. R. zu 12 Wochen Sperrzeit (läuft zeitgleich zur Ruhenszeit und kürzt den Gesamtanspruch um max. 12 Wochen).",
-                "Wenn Sie Ihren vollen ALG-1-Anspruch nicht bis zum letzten Tag ausschöpfen, entsteht durch die Kürzung 0 € realer Geldverlust."
+        )
+    case .reichweiteLogic:
+        return StatutoryInfoContent(
+            title: "Reichweite: Abfindungs-Puffer & Mindestzeit-Logik",
+            subtitle: "Cash-Burn-Phasen, 3-Monats-Minimum & 9M ALG 1",
+            sections: [
+                ("1. Day-0 Einmalabfluss",
+                 "Einmalabflüsse (Day-0, z. B. Kredit/Puffer oder Rürup) werden sofort zu Beginn abgezogen."),
+                ("2. Sprinter-/Sperrphase & Vergleich mit Kündigungsfrist / 3-Monats-Sperrzeit",
+                 "Der verbleibende Netto-Puffer überbrückt die anfängliche Sprinter-/Sperrphase anhand Ihres monatlichen Netto-Vergleichsgehalts (dem Netto, das Sie anstelle einer regulären Beschäftigung in der Kündigungsfrist erhalten).\n• Weniger als 3 Monate Puffer (< 3 Mon.): Reicht der rechnerische Puffer aus dem Abfindungs-/Sprinter-Betrag für weniger als die 3-monatige Sperrzeit, wird das Minimum aus beiden Zeiträumen angesetzt.\n• Mehr als Kündigungsfrist (> fristMonate): Deckt der rechnerische Puffer mehr Monate ab als Ihre Kündigungsfrist (z. B. > 5 Monate), bleibt der volle Überschuss im Konto-Cash erhalten und verlängert die spätere Reichweite — die Startphase wird nicht künstlich verkürzt."),
+                ("3. ALG-1-Phase (z. B. 9M) & Privatier-Phase",
+                 "Nach der anfänglichen Sprinter-/Ruhensphase starten die verbleibenden ALG-1-Monate (bei 12 Monaten Anspruch abzüglich 3 Monaten Sperrzeit: 9 Monate ALG 1) mit einer monatlichen Netto-Entnahme von (Monatsausgaben − ALG 1 Netto). Nach Ablauf von ALG 1 folgt die reine Privatier-Phase mit einer monatlichen Entnahme von (Monatsausgaben + GKV nach ALG 1) bis das Kapital aufgebraucht ist (zuzüglich FA-Erstattung Okt. 2028 und Real-Zins)."),
+                ("Hinweis (§ 2 StBerG)",
+                 "Unverbindliche Modellrechnung auf Basis der Rechengrößen 2027. Keine Steuer- oder Rechtsberatung.")
             ]
-        case .solverModes:
-            return [
-                "Manuell: Sie steuern alle vier Regler (bAV, Rürup, DRV V0210, PV-IAB) komplett frei nach Ihren eigenen Vorgaben.",
-                "Liquidität (Cash-Plus): Füllt nur Rürup bis zum Cash-Plus Sweet-Spot (zvE-Basis → 0 €, oft >100 % Erstattung) und lässt bAV, DRV und PV-IAB bei 0 € für maximales Bankguthaben.",
-                "Optimal-Netto (Max. Steuer-Hebel): Schöpft bAV und Rürup voll aus und nutzt zusätzlich PV-IAB (§ 7g EStG) für das restliche Basiseinkommen (3-Jahres-Investitionsfrist beachten).",
-                "Altersvorsorge: Maximiert bAV, Rürup und 30.000 € DRV V0210 für maximale spätere Rente — komplett ohne PV-IAB."
+        )
+    case .solverModes:
+        return StatutoryInfoContent(
+            title: "Optimierungs-Modi",
+            subtitle: "Manuell, Liquidität, Optimal-Netto & Altersvorsorge",
+            sections: [
+                ("Modi im Überblick",
+                 "Wählt eine Zielgewichtung für bAV (§ 3 Nr. 63), Rürup (§ 10), DRV V0210 und PV-IAB (§ 7g) oder erlaubt die freie manuelle Einstellung.")
             ]
-        case .bav63:
-            return [
-                "Setzt sich 2027 aus zwei steuerfreien Töpfen zusammen: 42.480 € Vervielfältigungsregel (§ 3 Nr. 63 S. 3 EStG: 4 % × 106.200 € × max. 10 Dienstjahre) plus 8.496 € regulärer 8 %-Jahresrahmen (§ 3 Nr. 63 S. 1 EStG).",
-                "Die Steuerersparnis erfolgt sofort 2027 (weniger AG-Lohnsteuereinbehalt), nicht als FA-Erstattung 2028.",
-                "Kürzt die Abfindung direkt vor der Fünftelung und schmälert Ihren Rürup-Höchstbetrag nicht."
+        )
+    case .bav63:
+        return StatutoryInfoContent(
+            title: "Betriebliche Altersversorgung (§ 3 Nr. 63 EStG)",
+            subtitle: "Steuer- und sozialabgabenbegünstigte Entgeltumwandlung",
+            sections: [
+                ("Wirkung",
+                 "Reduziert das steuer- und beitragspflichtige Einkommen im Rahmen der gesetzlichen Höchstgrenzen und senkt den Sofort-Abzug.")
             ]
-        case .ruerup10:
-            return [
-                "Beiträge zur Basisrente sind 2027 bis 32.308 € (Einzel) bzw. 64.616 € (Splitting) abzgl. laufender gesetzlicher RV-Beiträge (18,6 % AN+AG) absetzbar.",
-                "Fünftel-Hebel: Da Rürup das reguläre Basiseinkommen senkt, rutscht der 1/5-Abfindungsblock in niedrigere Progressionszonen.",
-                "Achtung Liquidität: Das eingezahlte Kapital ist dauerhaft bis zum Rentenbeginn gebunden (lebenslange Verrentung)."
+        )
+    case .ruerup10:
+        return StatutoryInfoContent(
+            title: "Rürup / Basisrente (§ 10 Abs. 3 EStG)",
+            subtitle: "Sonderausgabenabzug & Kapitalbindung",
+            sections: [
+                ("Wirkung & Bindung",
+                 "Senkt das zu versteuernde Einkommen bis zum gemeinsamen/individuellen Höchstbetrag (abzüglich RV-Beiträge). Das eingezahlte Kapital ist lebenslang als Rente gebunden.")
             ]
-        case .drvV0210:
-            return [
-                "Steuer-Split: 50 % der Arbeitgeber-Direktzahlung sind nach § 3 Nr. 28 EStG komplett steuerfrei (ohne Kürzung Ihres Rürup-Limits); die anderen 50 % unterliegen der Fünftelregelung (§ 34 EStG).",
-                "Voraussetzung unter 50 Jahren: Ein konkretes, personalisiertes Abfindungsangebot bzw. ein Aufhebungsvertrags-Entwurf des Arbeitgebers.",
-                "Ablauf in 4 Schritten: (1) Kontenklärung via Formular V0100, (2) Antrag via Formular V0210, (3) Bescheid der DRV abwarten, (4) Direktüberweisung durch den Arbeitgeber vor Auszahlung der Abfindung."
+        )
+    case .drvV0210:
+        return StatutoryInfoContent(
+            title: "DRV-Ausgleichszahlung (V0210)",
+            subtitle: "Rentenabschläge ausgleichen",
+            sections: [
+                ("Wirkung",
+                 "Ermöglicht den Ausgleich von Rentenminderungen und wird im Modell mit den entsprechenden steuerlichen Regeln abgebildet.")
             ]
-        case .pvIab7g:
-            return [
-                "Für eine geplante gewerbliche Photovoltaik-Anlage (bis 400.000 €) können 50 % (max. 200.000 €) bereits 2027 als Investitionsabzugsbetrag (IAB) abgezogen werden.",
-                "Liquiditätsvorteil: Im Jahr 2027 sind 0 € sofortiger Kapitaleinsatz erforderlich — die Anschaffung muss erst innerhalb der folgenden 3 Kalenderjahre erfolgen."
+        )
+    case .pvIab7g:
+        return StatutoryInfoContent(
+            title: "Investitionsabzugsbetrag (§ 7g EStG)",
+            subtitle: "50 % Abzug auf geplante Anschaffungen (z. B. PV)",
+            sections: [
+                ("Wirkung",
+                 "Mindert das zu versteuernde Einkommen 2027 um bis zu 50 % der geplanten Anschaffungskosten ohne sofortigen Cash-Abfluss im Jahr 2027 (Investitionsfrist beachten).")
             ]
-        case .liquidityTimeline:
-            return [
-                "Konto-Cash 31.12.2027 zeigt Ihren tatsächlichen Bankkontostand am Jahresende nach Lohnsteuerabzug, Netto-Gehalt 2027, Rürup/PV-Abfluss und eventueller freiwilliger GKV.",
-                "Im Oktober 2028 fließt die Steuererstattung vom Finanzamt aus der Fünftelregelung und den Vorsorge-Hebeln auf Ihr Konto."
+        )
+    case .postAlg1Gkv:
+        return StatutoryInfoContent(
+            title: "Krankenversicherung nach ALG 1",
+            subtitle: "Mindestbeitrag, Familienversicherung oder individuell",
+            sections: [
+                ("Monatliche Kosten",
+                 "Nach Ende des ALG-1-Bezugs fallen laufende Kranken- und Pflegeversicherungsbeiträge an, sofern keine Familienversicherung greift.")
             ]
-        }
+        )
+    case .liquidityTimeline:
+        return StatutoryInfoContent(
+            title: "Liquiditäts-Zeitstrahl 2027 / 2028",
+            subtitle: "Sofort-Netto 2027, Einkommen 2027 & FA-Erstattung 2028",
+            sections: [
+                ("Zeitlicher Ablauf",
+                 "Trennt den unmittelbaren Netto-Zufluss 2027 von der Einkommensteuerveranlagung (Erstattung/Nachzahlung) im Folgejahr.")
+            ]
+        )
     }
 }
 
@@ -200,14 +182,12 @@ struct InfoIconButton: View {
         Button {
             selectedTopic = topic
         } label: {
-            Image(systemName: topic.icon)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(topic.accentColor)
-                .padding(4)
-                .contentShape(Rectangle())
+            Image(systemName: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.blue)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Info zu \(topic.title)")
+        .accessibilityLabel("Weitere Informationen")
     }
 }
 
@@ -216,57 +196,30 @@ struct StatutoryInfoSheetView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        let content = infoContent(for: topic)
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 10) {
-                        Image(systemName: topic.icon)
-                            .font(.title2)
-                            .foregroundStyle(topic.accentColor)
-                        Text(topic.badge)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(topic.accentColor.opacity(0.14))
-                            .foregroundStyle(topic.accentColor)
-                            .clipShape(Capsule())
-                    }
-
-                    Text(topic.summary)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.primary)
-
-                    Divider()
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(topic.bullets, id: \.self) { bullet in
-                            HStack(alignment: .top, spacing: 10) {
-                                Circle()
-                                    .fill(topic.accentColor)
-                                    .frame(width: 6, height: 6)
-                                    .padding(.top, 6)
-                                Text(bullet)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
+            List {
+                Section {
+                    Text(content.subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(Array(content.sections.enumerated()), id: \.offset) { _, sec in
+                    Section(sec.heading) {
+                        Text(sec.body)
+                            .font(.footnote)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding()
             }
-            .navigationTitle(topic.title)
+            .navigationTitle(content.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Fertig") {
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
+                    Button("Fertig") { dismiss() }
                 }
             }
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
     }
 }
