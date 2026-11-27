@@ -152,7 +152,6 @@ struct SimulationInput: Codable, Equatable {
     var newJobStartMonth2027: Int = 0
     var newJobMonthlyGross: Double = 6_500
     var claimAlg1In2027: Bool = true
-    var includeAlg1Loss: Bool = true
 
     // Family, Tax & GKV
     var isSplitting: Bool = false
@@ -165,7 +164,7 @@ struct SimulationInput: Codable, Equatable {
     // Sprinter Option
     var turboEnabled: Bool = false
     var turboFaktor: Double = 1.5
-   
+    var includeAlg1Loss: Bool = true
 
     // Section B: Tax Optimization Levers
     var taxOptimizationEnabled: Bool = false
@@ -317,7 +316,7 @@ struct SimulationResult {
 // MARK: - 2027 Statutory German Tax, § 32b Progressionsvorbehalt, Solver & Runway Engine
 
 final class TaxEngineHost: ObservableObject {
-   private static let storageKey = "abfindungspilot_input_v27_2_2"
+    private static let storageKey = "abfindungspilot_input_v27_2_2"
 
     @Published var input: SimulationInput {
         didSet {
@@ -1773,7 +1772,7 @@ struct CompactSliderRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 4) {
                         Text(title)
                             .font(.subheadline.weight(.medium))
                             .lineLimit(1)
@@ -2828,16 +2827,6 @@ struct ReichweiteTabView: View {
         return ("Gleichstand", .secondary)
     }
 
-    private var realRateExplanation: String {
-        if engine.input.realReturnPct > 0.05 {
-            return "Realrendite nach Inflation: Guthaben wächst real über der Inflation (+) → verlängert die Reichweite."
-        } else if engine.input.realReturnPct < -0.05 {
-            return "Realverlust durch Inflation: Kaufkraftverlust übersteigt den Zins (−) → verkürzt die Reichweite."
-        } else {
-            return "Real-Zins / Inflation p.a. (Rendite minus Inflation): (+) verlängert Reichweite, (−) verkürzt sie."
-        }
-    }
-
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
@@ -2874,7 +2863,7 @@ struct ReichweiteTabView: View {
                         }
                     }
 
-VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
                             Text("GKV nach ALG 1")
                                 .font(.subheadline.weight(.medium))
