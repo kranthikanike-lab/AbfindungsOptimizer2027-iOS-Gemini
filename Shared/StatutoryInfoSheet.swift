@@ -9,16 +9,13 @@ enum StatutoryTopic: String, Identifiable {
     case agFiktiv
     case sprinterLegal
     case alg1Rules
-    case reichweiteOverview
     case reichweiteLogic
-    case jobSwitchOverview
     case solverModes
     case bav63
     case ruerup10
     case drvV0210
     case pvIab7g
     case postAlg1Gkv
-    case realReturnInflation
     case liquidityTimeline
 
     var id: String { rawValue }
@@ -83,36 +80,17 @@ private func infoContent(for topic: StatutoryTopic) -> StatutoryInfoContent {
         )
     case .alg1Rules:
         return StatutoryInfoContent(
-            title: "Sprinter-Option, Faktor & ALG-1-Regeln",
-            subtitle: "Sofort-Austritt, Sprinter-Prämie · §§ 143a, 159 SGB III",
+            title: "Sprinter: Ruhenszeit, Sperrzeit & Abfindungs-Anteil",
+            subtitle: "§§ 143a, 159 SGB III · Alter, Betriebszugehörigkeit & 9M ALG 1",
             sections: [
-                ("1. Was bedeutet Sprinter-Option & Sprinter-Faktor?",
-                 "• Sofort-Austritt ohne Kündigungsfrist: Mit der Sprinter-Option (Turboklausel) verzichten Sie darauf, Ihre reguläre Kündigungsfrist abzusitzen, und scheiden sofort bzw. früher aus dem Unternehmen aus.\n• Sprinter-Faktor (z. B. 1,5x): Für jeden eingesparten Monat der Kündigungsfrist zahlt der Arbeitgeber eine zusätzliche Prämie als Vielfaches Ihres Monatsbruttos (bei Faktor 1,5x also 1,5 Monatsgehälter pro eingespartem Fristmonat). Dafür entfallen die regulären Gehaltszahlungen während der Kündigungsfrist."),
-                ("2. Ruhenszeit (§ 143a SGB III)",
+                ("1. Ruhenszeit (§ 143a SGB III)",
                  "Greift bei vorzeitigem Austritt (Sprinter) mit Abfindung, wenn das Arbeitsverhältnis ohne Abfindung erst nach Ablauf der regulären Kündigungsfrist (fristMonate, z. B. 5 Monate) geendet hätte. Während der Ruhenszeit ruht der ALG-1-Anspruch (0 € ALG 1), da eine Doppelzahlung parallel zur fiktiven Kündigungsfrist vermieden werden soll. Bei freiwilliger GKV/PKV fallen laufende Beiträge an (bei Pflicht-GKV greift i. d. R. der 1-Monats-Nachlauf nach § 19 Abs. 2 SGB V)."),
-                ("3. Sperrzeit (§ 159 SGB III) & Zusammenspiel mit der Ruhenszeit",
+                ("2. Sperrzeit (§ 159 SGB III) & Zusammenspiel mit der Ruhenszeit",
                  "Bei freiwilligem Ausscheiden oder Aufhebungsvertrag ohne wichtigen Grund kann eine Sperrzeit von regelmäßig 12 Wochen (ca. 3 Monaten) eintreten.\n• Gleichzeitiger Ablauf statt einfacher Addition: Die Sperrzeit beginnt ab dem Austritt und läuft bei einer längeren Ruhenszeit (z. B. 5 Monate Kündigungsfrist) parallel / überlappend innerhalb der ersten Monate ab — sie wird also nicht pauschal als weitere 3 Monate oben auf die 5 Monate addiert.\n• Anspruchskürzung (z. B. 12M → 9M): Durch die Sperrzeit verkürzt sich jedoch die gesamte ALG-1-Bezugsdauer entsprechend (aus einem 12-monatigen Anspruch werden 9 Monate ALG 1 nach Ablauf der Start-/Ruhensphase)."),
-                ("4. Abfindungs-Anteil nach Alter & Jahren im Job",
+                ("3. Abfindungs-Anteil nach Alter & Jahren im Job",
                  "Je nach Lebensalter und Dauer der Betriebszugehörigkeit (Jahre im Job) wird im Modell nur ein bestimmter Prozentsatz der Abfindung für die Sprinter-Überbrückung angesetzt — nicht zwingend 100 %:\n• < 5 Jahre im Job: < 50 J. ~50 % · 50–54 J. ~60 % · 55+ J. ~70 %\n• 5–14 Jahre im Job: < 50 J. ~65 % · 50–54 J. ~75 % · 55+ J. ~85 %\n• 15+ Jahre im Job: < 50 J. ~80 % · 50–54 J. ~90 % · 55+ J. 100 %"),
                 ("Hinweis (§ 2 StBerG)",
                  "Unverbindliche Orientierungstabelle und Modellrechnung (keine Rechts- oder Steuerberatung). Maßgeblich im Einzelfall sind Vereinbarung/Sozialplan sowie der Bescheid der Agentur für Arbeit.")
-            ]
-        )
-    case .reichweiteOverview:
-        return StatutoryInfoContent(
-            title: "Reichweite (Überleben ohne Job)",
-            subtitle: "Cash-Burn-Simulation · Standard (Frist) vs. Sprinter (Sofort)",
-            sections: [
-                ("1. Worum geht es hier?",
-                 "Zeigt, wie viele Monate Ihr Netto-Kapital aus Abfindung, Gehalt und Steuererstattung Ihre laufenden Lebenshaltungskosten deckt — im direkten Vergleich zwischen regulärer Kündigungsfrist (Standard 🐢) und sofortigem Austritt (Sprinter 🏃)."),
-                ("2. Startkapital & Day-0 Abfluss",
-                 "Basis ist Ihr Sofort-Netto 2027 abzüglich einer eventuellen Rürup-Einzahlung und Ihrem Einmal-Abfluss 2027 (Day-0, z. B. Kreditablösung oder fester Notgroschen)."),
-                ("3. Die 3 Lebensphasen im Zeitstrahl",
-                 "• Frist / Ruhenszeit: Bei Standard läuft Ihr Gehalt weiter (optional inkl. gespartem Überschuss). Bei Sprinter überbrückt das Kapital die Ruhens-/Sperrzeit inkl. freiwilliger GKV/PKV.\n• ALG-1-Phase: Monatliche Entnahme = (Monatsausgaben − ALG 1 Netto). Bei aktiver Sperrzeit verkürzt sich Sprinter z. B. von 12M auf 9M.\n• Privatier-Phase: Nach ALG 1 fallen volle (Monatsausgaben + GKV nach ALG 1) an, bis das Guthaben aufgebraucht ist."),
-                ("4. FA-Erstattung Okt. 2028 & Brücke",
-                 "Im Oktober 2028 fließt die Einkommensteuer-Erstattung auf das Konto. Der Meilenstein „Okt. 2028 Brücke“ warnt, falls das Guthaben schon vor dieser Erstattung ins Minus laufen würde."),
-                ("5. Real-Zins / Inflation p.a.",
-                 "Verzinst oder entwertet das laufende Restkapital monatlich nach Inflation: Ein positiver Wert (+) verlängert die Reichweite, ein negativer Wert (−) verkürzt sie.")
             ]
         )
     case .reichweiteLogic:
@@ -128,23 +106,6 @@ private func infoContent(for topic: StatutoryTopic) -> StatutoryInfoContent {
                  "Nach der anfänglichen Sprinter-/Ruhensphase starten die verbleibenden ALG-1-Monate (bei 12 Monaten Anspruch abzüglich 3 Monaten Sperrzeit: 9 Monate ALG 1) mit einer monatlichen Netto-Entnahme von (Monatsausgaben − ALG 1 Netto). Nach Ablauf von ALG 1 folgt die reine Privatier-Phase mit einer monatlichen Entnahme von (Monatsausgaben + GKV nach ALG 1) bis das Kapital aufgebraucht ist (zuzüglich FA-Erstattung Okt. 2028 und Real-Zins)."),
                 ("Hinweis (§ 2 StBerG)",
                  "Unverbindliche Modellrechnung auf Basis der Rechengrößen 2027. Keine Steuer- oder Rechtsberatung.")
-            ]
-        )
-    case .jobSwitchOverview:
-        return StatutoryInfoContent(
-            title: "Job-Switch & Break-Even",
-            subtitle: "Gehaltswechsel mit Abfindung · Vermögens-Vorsprung",
-            sections: [
-                ("1. Worum geht es hier?",
-                 "Beantwortet die Frage: „Wie lange bin ich finanziell im Plus, wenn ich die Abfindung mitnehme und dafür in einen neuen Job mit anderem Gehalt wechsle?“"),
-                ("2. Abfindungs-Vorsprung (Start & Jahr 2)",
-                 "Sie starten mit dem Netto-Puffer der Abfindung (abzüglich Rürup und eventueller Ruhens-GKV). In Jahr 2 kommt die Finanzamt-Erstattung (Okt. 2028) als zusätzlicher Schub hinzu."),
-                ("3. Jährlicher Netto-Vergleich (Alt vs. Neu)",
-                 "Vergleicht jedes Jahr das Netto im neuen Job (inklusive einer optionalen Pause bis zum Neustart in Jahr 1) mit dem Netto, das Sie im alten Job weiterverdient hätten — bei gleichem prozentualen Gehaltswachstum."),
-                ("4. Break-Even-Punkt (0 € Schwelle)",
-                 "Solange die Kurve über 0 € bleibt, überwiegt Ihr Abfindungs-Vorsprung. Der Break-Even (Jahre + Monat/Jahr) zeigt genau, ab wann das höhere alte Gehalt den Vorsprung aufgeholt hat. Ist das neue Gehalt gleich hoch oder höher, bleiben Sie dauerhaft im Plus (> 15 Jahre)."),
-                ("5. Standard vs. Sprinter",
-                 "Vergleicht beide Ausstiegswege inklusive Startpause: Bei Standard federt ggf. ALG 1 die Pause ab, bei Sprinter wirkt die höhere Sprinter-Prämie.")
             ]
         )
     case .solverModes:
@@ -201,21 +162,6 @@ private func infoContent(for topic: StatutoryTopic) -> StatutoryInfoContent {
                  "Nach Ende des ALG-1-Bezugs fallen laufende Kranken- und Pflegeversicherungsbeiträge an, sofern keine Familienversicherung greift.")
             ]
         )
-    case .realReturnInflation:
-        return StatutoryInfoContent(
-            title: "Real-Zins / Inflation p.a.",
-            subtitle: "Rendite nach Inflation · Wirkung auf die Reichweite",
-            sections: [
-                ("Was bedeutet der Wert?",
-                 "Der Real-Zins entspricht der jährlichen Kapitalrendite abzüglich der Inflation (reale Kaufkraft-Veränderung Ihres Guthabens pro Jahr)."),
-                ("Positiver Wert (+, z. B. +2,0 %)",
-                 "Ihr Guthaben wächst real stärker als die Inflation (Kapitalertrag > Inflation). Das verlängert Ihre Reichweite."),
-                ("Negativer Wert (−, z. B. −2,0 %)",
-                 "Die Inflation übersteigt den Zins (Kaufkraftverlust > Rendite). Das verkürzt Ihre Reichweite."),
-                ("Neutral (0,0 %)",
-                 "Zinsen gleichen die Inflation exakt aus — die Kaufkraft Ihres Guthabens bleibt konstant.")
-            ]
-        )
     case .liquidityTimeline:
         return StatutoryInfoContent(
             title: "Liquiditäts-Zeitstrahl 2027 / 2028",
@@ -236,7 +182,7 @@ struct InfoIconButton: View {
         Button {
             selectedTopic = topic
         } label: {
-            Image(systemName: "questionmark.circle")
+            Image(systemName: "info.circle")
                 .font(.caption)
                 .foregroundStyle(.blue)
         }

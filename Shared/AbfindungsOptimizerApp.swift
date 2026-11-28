@@ -43,31 +43,6 @@ private struct IdentifiableURL: Identifiable {
     let url: URL
 }
 
-private struct TabHeaderTitleView: View {
-    let title: String
-    var infoTopic: StatutoryTopic? = nil
-    @Binding var selectedInfoTopic: StatutoryTopic?
-
-    var body: some View {
-        HStack(spacing: 5) {
-            Text(title)
-                .font(.title3.weight(.bold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            if let infoTopic {
-                Button {
-                    selectedInfoTopic = infoTopic
-                } label: {
-                    Image(systemName: "info.circle")
-                        .font(.subheadline)
-                        .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(title) Informationen")
-            }
-        }
-    }
-}
 
 // MARK: - Domain Models
 
@@ -344,7 +319,7 @@ struct SimulationResult {
 // MARK: - 2027 Statutory German Tax, § 32b Progressionsvorbehalt, Solver & Runway Engine
 
 final class TaxEngineHost: ObservableObject {
-    private static let storageKey = "abfindungspilot_input_v27_2_3"
+    private static let storageKey = "abfindungspilot_input_v27_2_1"
 
     @Published var input: SimulationInput {
         didSet {
@@ -1528,7 +1503,7 @@ struct MainTabContainerView: View {
         triggerLightHaptic()
         let pageRect = CGRect(x: 0, y: 0, width: 595, height: 842)
         let renderer = UIGraphicsPDFRenderer(bounds: pageRect)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_v27_2_3_Report.pdf")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("AbfindungsPilot_2027_v27_2_1_Report.pdf")
         let inp = engine.input
         let res = engine.result
 
@@ -1550,7 +1525,7 @@ struct MainTabContainerView: View {
         ]
 
         func drawHeader(pageTitle: String, pageNum: Int) {
-            "AbfindungsPilot 2027 (v27.2.3) – \(pageTitle)".draw(at: CGPoint(x: 36, y: 32), withAttributes: titleAttrs)
+            "AbfindungsPilot 2027 (v27.2.1) – \(pageTitle)".draw(at: CGPoint(x: 36, y: 32), withAttributes: titleAttrs)
             "Seite \(pageNum)".draw(at: CGPoint(x: 520, y: 36), withAttributes: footAttrs)
         }
 
@@ -1740,7 +1715,7 @@ struct SettingsAndPDFSheetView: View {
                     .padding(.vertical, 2)
                 }
 
-                Section("A4 PDF-Report (Mehrseitig · v27.2.3)") {
+                Section("A4 PDF-Report (Mehrseitig · v27.2.1)") {
                     Text("Seiten 1–3 (Eingaben, Steuer, Ergebnis) sind immer enthalten:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -2183,7 +2158,7 @@ struct InputsTabView: View {
                                 .foregroundStyle(.orange)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Infos zu Sprinter-Option, Faktor, Ruhenszeit und Sperrzeit")
+                        .accessibilityLabel("Regeln zu Ruhenszeit, Sperrzeit und Abfindungs-Anteil")
                     }
                 }
                 .tint(.orange)
@@ -2896,6 +2871,16 @@ struct ReichweiteTabView: View {
         return ("Gleichstand", .secondary)
     }
 
+    private var realRateExplanation: String {
+        if engine.input.realReturnPct > 0.05 {
+            return "Realrendite nach Inflation: Guthaben wächst real über der Inflation (+) → verlängert die Reichweite."
+        } else if engine.input.realReturnPct < -0.05 {
+            return "Realverlust durch Inflation: Kaufkraftverlust übersteigt den Zins (−) → verkürzt die Reichweite."
+        } else {
+            return "Real-Zins / Inflation p.a. (Rendite minus Inflation): (+) verlängert Reichweite, (−) verkürzt sie."
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 10) {
@@ -2933,38 +2918,22 @@ struct ReichweiteTabView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: 8) {
                             Text("GKV nach ALG 1")
                                 .font(.subheadline.weight(.medium))
                                 .lineLimit(1)
-                                .layoutPriority(1)
                             InfoIconButton(topic: .postAlg1Gkv, selectedTopic: $selectedInfoTopic)
-                            Spacer(minLength: 4)
-                            Menu {
+                            Spacer(minLength: 8)
+                            Picker("", selection: $engine.input.postAlg1GkvMode) {
                                 ForEach(PostAlg1GkvMode.allCases) { m in
-                                    Button {
-                                        engine.input.postAlg1GkvMode = m
-                                    } label: {
-                                        if engine.input.postAlg1GkvMode == m {
-                                            Label(m.displayName, systemImage: "checkmark")
-                                        } else {
-                                            Text(m.displayName)
-                                        }
-                                    }
+                                    Text(m.displayName).tag(m)
                                 }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Text(engine.input.postAlg1GkvMode.displayName)
-                                        .font(.subheadline)
-                                        .lineLimit(1)
-                                    Image(systemName: "chevron.up.chevron.down")
-                                        .font(.caption2)
-                                }
-                                .foregroundStyle(.blue)
-                                .fixedSize(horizontal: true, vertical: false)
                             }
+                            .labelsHidden()
+                            .pickerStyle(.menu)
+                            .lineLimit(1)
                         }
-                        Text("Beitrag nach ALG 1: \(eur(engine.result.effectivePostGkvMonthly))/Mo")
+                        Text("Angesetzter Beitrag nach ALG 1: \(eur(engine.result.effectivePostGkvMonthly))/Mo")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
@@ -2983,7 +2952,7 @@ struct ReichweiteTabView: View {
 
                     CompactSliderRow(
                         title: "Real-Zins / Inflation p.a.",
-                        topic: .realReturnInflation,
+                        subtitle: realRateExplanation,
                         selectedInfoTopic: $selectedInfoTopic,
                         value: $engine.input.realReturnPct,
                         range: -3.0...6.0,
