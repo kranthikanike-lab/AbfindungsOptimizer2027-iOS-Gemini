@@ -147,11 +147,9 @@ struct SimulationInput: Codable, Equatable {
     var altesMonatsgehalt: Double = 7_500
     var fristMonate: Int = 5
     var bruttoAbfindung: Double = 150_000
-    /// `0` triggers smart auto-default derived from annualized 2027 salary; `> 0` is an explicit override.
     var agFiktivGehalt: Double = 0
     var payoutMonth2027: Int = 4
     var neuesGehalt2027: Double = 0
-    /// `0` = Kein Neu-Job 2027; `2...12` = Startmonat in 2027 (Feb..Dez)
     var newJobStartMonth2027: Int = 0
     var newJobMonthlyGross: Double = 6_500
     var claimAlg1In2027: Bool = true
@@ -161,13 +159,13 @@ struct SimulationInput: Codable, Equatable {
     var partnerGehalt2027: Double = 0
     var kinderZahl: Double = 0.0
     var churchRate: Double = 0.0
-    var kvZusatzbeitragPct: Double = 2.5
+    var kvZusatzbeitragPct: Double = 2.9
     var preExitGkv: PreExitGkvStatus = .pflicht
 
     // Sprinter Option
     var turboEnabled: Bool = false
     var turboFaktor: Double = 1.5
-    var includeAlg1Loss: Bool = false
+    var includeAlg1Loss: Bool = true
 
     // Section B: Tax Optimization Levers
     var taxOptimizationEnabled: Bool = false
@@ -309,6 +307,8 @@ struct SimulationResult {
     // Section D: Job-Switch
     var breakEvenYearStandard: Double? = nil
     var breakEvenYearSprinter: Double? = nil
+    var breakEvenDateStandard: String? = nil
+    var breakEvenDateSprinter: String? = nil
     var switchCurve: [DualSeriesPoint] = []
     var switchDeltaYear5Std: Double = 0
     var switchDeltaYear5Spr: Double = 0
@@ -1255,6 +1255,7 @@ final class TaxEngineHost: ObservableObject {
         let newAnnual = input.switchNewAnnualGross
         let growth = input.switchAnnualGrowthPct / 100.0
         let alg1 = monthlyAlg1Net()
+        let startOffset = max(0, input.payoutMonth2027 - 1)
 
         func simulateSwitch(isSprinter: Bool) -> (curve: [Double], breakEvenYear: Double?) {
             let abfGross = input.bruttoAbfindung + (isSprinter ? Double(input.fristMonate) * input.altesMonatsgehalt * input.turboFaktor : 0)
@@ -1318,6 +1319,8 @@ final class TaxEngineHost: ObservableObject {
 
         r.breakEvenYearStandard = std.breakEvenYear
         r.breakEvenYearSprinter = spr.breakEvenYear
+        r.breakEvenDateStandard = std.breakEvenYear.map { formatMonthOffset(startOffset + Int(($0 * 12.0).rounded())) }
+        r.breakEvenDateSprinter = spr.breakEvenYear.map { formatMonthOffset(startOffset + Int(($0 * 12.0).rounded())) }
         r.switchDeltaYear5Std = std.curve[5]
         r.switchDeltaYear5Spr = spr.curve[5]
         r.switchDeltaYear10Std = std.curve[10]
@@ -1362,9 +1365,10 @@ struct MainTabContainerView: View {
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .principal) {
-                            Text("AbfindungsPilot")
-                                .font(.headline.weight(.bold))
-                                .lineLimit(1)
+                            TabHeaderTitleView(
+                                title: "AbfindungsPilot",
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
                         }
                         sharedToolbar
                     }
@@ -1374,9 +1378,16 @@ struct MainTabContainerView: View {
 
             NavigationStack {
                 TaxOptimizationTabView(selectedInfoTopic: $selectedInfoTopic)
-                    .navigationTitle("Steuer-Hebel")
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { sharedToolbar }
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TabHeaderTitleView(
+                                title: "Steuer-Hebel",
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
+                        }
+                        sharedToolbar
+                    }
             }
             .tabItem { Label("Steuer", systemImage: "wand.and.stars") }
             .tag(1)
@@ -1386,27 +1397,50 @@ struct MainTabContainerView: View {
                     selectedInfoTopic: $selectedInfoTopic,
                     onOpenPDFOptions: { showSettingsSheet = true }
                 )
-                .navigationTitle("Ergebnis 2027")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar { sharedToolbar }
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        TabHeaderTitleView(
+                            title: "Ergebnis 2027",
+                            selectedInfoTopic: $selectedInfoTopic
+                        )
+                    }
+                    sharedToolbar
+                }
             }
             .tabItem { Label("Ergebnis", systemImage: "chart.pie.fill") }
             .tag(2)
 
             NavigationStack {
                 ReichweiteTabView(selectedInfoTopic: $selectedInfoTopic)
-                    .navigationTitle("Reichweite")
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { sharedToolbar }
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TabHeaderTitleView(
+                                title: "Reichweite",
+                                infoTopic: .reichweiteOverview,
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
+                        }
+                        sharedToolbar
+                    }
             }
             .tabItem { Label("Reichweite", systemImage: "hourglass") }
             .tag(3)
 
             NavigationStack {
                 JobSwitchTabView(selectedInfoTopic: $selectedInfoTopic)
-                    .navigationTitle("Job-Switch")
                     .navigationBarTitleDisplayMode(.inline)
-                    .toolbar { sharedToolbar }
+                    .toolbar {
+                        ToolbarItem(placement: .principal) {
+                            TabHeaderTitleView(
+                                title: "Job-Switch",
+                                infoTopic: .jobSwitchOverview,
+                                selectedInfoTopic: $selectedInfoTopic
+                            )
+                        }
+                        sharedToolbar
+                    }
             }
             .tabItem { Label("Switch", systemImage: "arrow.left.arrow.right") }
             .tag(4)
@@ -1600,8 +1634,14 @@ struct MainTabContainerView: View {
                     pageCounter += 1
                     ctx.beginPage()
                     drawHeader(pageTitle: "5. Job-Switch & Break-Even", pageNum: pageCounter)
-                    let stdBe = res.breakEvenYearStandard.map { String(format: "%.1f Jahre", $0) } ?? "> 15 Jahre"
-                    let sprBe = res.breakEvenYearSprinter.map { String(format: "%.1f Jahre", $0) } ?? "> 15 Jahre"
+                    let stdBe = res.breakEvenYearStandard.map { y in
+                        let yrs = String(format: "%.1f Jahre", y)
+                        return res.breakEvenDateStandard.map { "\(yrs) (\($0))" } ?? yrs
+                    } ?? "> 15 Jahre"
+                    let sprBe = res.breakEvenYearSprinter.map { y in
+                        let yrs = String(format: "%.1f Jahre", y)
+                        return res.breakEvenDateSprinter.map { "\(yrs) (\($0))" } ?? yrs
+                    } ?? "> 15 Jahre"
                     let p5 = """
                     • Neues Jahresbrutto: \(eur(inp.switchNewAnnualGross))  |  Pause: \(inp.switchStartDelayMonths) Mon.  |  Wachstum p.a.: \(pct(inp.switchAnnualGrowthPct))
                     • Break-Even: Standard \(stdBe)  |  Sprinter \(sprBe)
@@ -1775,7 +1815,7 @@ struct CompactSliderRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 2) {
+                    HStack(spacing: 4) {
                         Text(title)
                             .font(.subheadline.weight(.medium))
                             .lineLimit(1)
@@ -1882,6 +1922,35 @@ struct InputsTabView: View {
                             .monospacedDigit()
                     }
                 }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("AG-Fiktivgehalt (LSt)")
+                            .font(.subheadline.weight(.medium))
+                            .lineLimit(1)
+                        InfoIconButton(topic: .agFiktiv, selectedTopic: $selectedInfoTopic)
+                        Spacer()
+                        if !engine.result.isAgFiktivAutoDefault {
+                            Button("Auto") {
+                                engine.input.agFiktivGehalt = 0
+                            }
+                            .font(.caption.weight(.semibold))
+                        }
+                        Text(eur(engine.result.effectiveAgFiktiv))
+                            .font(.subheadline.bold())
+                            .monospacedDigit()
+                    }
+                    Slider(
+                        value: Binding(
+                            get: { engine.result.effectiveAgFiktiv },
+                            set: { engine.input.agFiktivGehalt = $0 }
+                        ),
+                        in: 30_000...200_000,
+                        step: 2_500
+                    )
+                    .controlSize(.small)
+                }
+                .padding(.vertical, 1)
 
                 HStack(spacing: 8) {
                     Text("Neuer Job in 2027")
@@ -2059,46 +2128,18 @@ struct InputsTabView: View {
                     .lineLimit(1)
                 }
 
-                CompactSliderRow(
-                    title: "KV-Zusatzbeitrag",
-                    selectedInfoTopic: $selectedInfoTopic,
-                    value: $engine.input.kvZusatzbeitragPct,
-                    range: 1.0...4.5,
-                    step: 0.1,
-                    valueFormatter: { pct($0) }
-                )
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Text("AG-Fiktivgehalt (LSt)")
-                            .font(.subheadline.weight(.medium))
-                        InfoIconButton(topic: .agFiktiv, selectedTopic: $selectedInfoTopic)
-                        Spacer()
-                        Text(eur(engine.result.effectiveAgFiktiv))
-                            .font(.subheadline.bold())
-                            .monospacedDigit()
-                    }
-                    HStack {
-                        Text(engine.result.isAgFiktivAutoDefault ? "Auto-Default aus Gehalt" : "Eigener Wert gesetzt")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        if !engine.result.isAgFiktivAutoDefault {
-                            Button("Auto") {
-                                engine.input.agFiktivGehalt = 0
-                            }
-                            .font(.caption.weight(.semibold))
+                if engine.input.preExitGkv != .pkv {
+                    Stepper(value: $engine.input.kvZusatzbeitragPct, in: 0.5...6.0, step: 0.1) {
+                        HStack {
+                            Text("KV-Zusatzbeitrag")
+                                .font(.subheadline.weight(.medium))
+                                .lineLimit(1)
+                            Spacer()
+                            Text(pct(engine.input.kvZusatzbeitragPct))
+                                .font(.subheadline.bold())
+                                .monospacedDigit()
                         }
                     }
-                    Slider(
-                        value: Binding(
-                            get: { engine.result.effectiveAgFiktiv },
-                            set: { engine.input.agFiktivGehalt = $0 }
-                        ),
-                        in: 30_000...200_000,
-                        step: 2_500
-                    )
-                    .controlSize(.small)
                 }
             } header: {
                 Text("Familie, Kinder & Steuern").font(.caption.weight(.semibold))
@@ -2670,7 +2711,7 @@ struct ResultsTabView: View {
     }
 }
 
-// MARK: - Side-by-Side Interactive Donut Charts (Ergebnis)
+// MARK: - Side-by-Side Interactive Donut Charts (Ergebnis · Matching Semantic Colors)
 
 private struct DonutSliceItem: Identifiable {
     let id = UUID()
@@ -2690,7 +2731,7 @@ struct SideBySideResultDonutsCard: View {
 
     private var slices1: [DonutSliceItem] {
         [
-            DonutSliceItem(label: "Sofort-Netto", value: max(0, sofortNetto), color: .blue),
+            DonutSliceItem(label: "Sofort-Netto", value: max(0, sofortNetto), color: .green),
             DonutSliceItem(label: "LSt-Einbehalt", value: max(0, upfrontTax), color: .red)
         ]
     }
@@ -2698,7 +2739,7 @@ struct SideBySideResultDonutsCard: View {
     private var slices2: [DonutSliceItem] {
         [
             DonutSliceItem(label: "Optimal-Netto", value: max(0, optimalNetto), color: .green),
-            DonutSliceItem(label: "Endg. Steuer", value: max(0, finalTax), color: .orange)
+            DonutSliceItem(label: "Endg. Steuer", value: max(0, finalTax), color: .red)
         ]
     }
 
@@ -2820,7 +2861,7 @@ struct ReichweiteTabView: View {
 
     private var phaseMaxX: Double {
         let m = max(engine.result.standardRunwayMonths, engine.result.sprinterRunwayMonths, engine.result.faRefundMonthIndex)
-        return max(18, m * 1.28)
+        return max(18, m * 1.40)
     }
 
     private var winnerPill: (text: String, color: Color) {
@@ -2973,11 +3014,16 @@ struct ReichweiteTabView: View {
                             }
                             .annotation(position: .trailing, spacing: 4) {
                                 if bar.isLast {
-                                    Text(bar.endDateLabel)
-                                        .font(.caption2.bold())
-                                        .monospacedDigit()
-                                        .foregroundStyle(bar.strategy == "Sprinter" ? .green : .orange)
-                                        .fixedSize()
+                                    HStack(spacing: 3) {
+                                        Text(bar.strategy == "Sprinter" ? "🏃" : "🐢")
+                                            .font(.caption)
+                                            .scaleEffect(x: -1, y: 1)
+                                        Text(bar.endDateLabel)
+                                            .font(.caption2.bold())
+                                            .monospacedDigit()
+                                            .foregroundStyle(bar.strategy == "Sprinter" ? .green : .orange)
+                                    }
+                                    .fixedSize()
                                 }
                             }
                         }
@@ -3105,8 +3151,18 @@ struct JobSwitchTabView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
 
                 HStack(spacing: 8) {
-                    beCard("Standard Break-Even", year: engine.result.breakEvenYearStandard, color: .orange)
-                    beCard("Sprinter Break-Even", year: engine.result.breakEvenYearSprinter, color: .green)
+                    beCard(
+                        "Standard Break-Even",
+                        year: engine.result.breakEvenYearStandard,
+                        dateLabel: engine.result.breakEvenDateStandard,
+                        color: .orange
+                    )
+                    beCard(
+                        "Sprinter Break-Even",
+                        year: engine.result.breakEvenYearSprinter,
+                        dateLabel: engine.result.breakEvenDateSprinter,
+                        color: .green
+                    )
                 }
 
                 SwitchAreaChartCard(
@@ -3132,16 +3188,17 @@ struct JobSwitchTabView: View {
         .background(Color(.systemGroupedBackground))
     }
 
-    private func beCard(_ title: String, year: Double?, color: Color) -> some View {
+    private func beCard(_ title: String, year: Double?, dateLabel: String?, color: Color) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
             Text(year.map { String(format: "%.1f Jahre", $0).replacingOccurrences(of: ".", with: ",") } ?? "> 15 Jahre")
                 .font(.title3.bold())
                 .monospacedDigit()
                 .foregroundStyle(color)
-            Text(year == nil ? "Dauerhaft im Plus" : "0 € Schwelle erreicht")
-                .font(.caption2)
+            Text(dateLabel.map { "0 € erreicht: \($0)" } ?? "Dauerhaft im Plus")
+                .font(.caption2.weight(dateLabel == nil ? .regular : .medium))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
@@ -3345,7 +3402,7 @@ struct ReichweiteAreaChartCard: View {
     }
 }
 
-// MARK: - Tailored Job-Switch Area Chart
+// MARK: - Tailored Job-Switch Area Chart (Auto-Cropped Past 0 € Break-Even)
 
 struct SwitchAreaChartCard: View {
     let points: [DualSeriesPoint]
@@ -3355,9 +3412,29 @@ struct SwitchAreaChartCard: View {
     @State private var filter: ChartStrategyFilter = .both
     @State private var selectedX: Double?
 
+    private var maxPlotYear: Double {
+        let relevantCross: Double? = {
+            switch filter {
+            case .standard:
+                return stdCrossX
+            case .sprinter:
+                return sprCrossX
+            case .both:
+                if let s = stdCrossX, let p = sprCrossX { return max(s, p) }
+                return stdCrossX ?? sprCrossX
+            }
+        }()
+        guard let cross = relevantCross else { return 15.0 }
+        return Double(min(15, max(4, Int(ceil(cross)) + 1)))
+    }
+
+    private var visiblePoints: [DualSeriesPoint] {
+        points.filter { $0.x <= maxPlotYear }
+    }
+
     private var activePoint: DualSeriesPoint? {
         guard let selectedX else { return nil }
-        return points.min(by: { abs($0.x - selectedX) < abs($1.x - selectedX) })
+        return visiblePoints.min(by: { abs($0.x - selectedX) < abs($1.x - selectedX) })
     }
 
     private func positiveTop(_ pt: DualSeriesPoint) -> Double {
@@ -3414,7 +3491,7 @@ struct SwitchAreaChartCard: View {
             }
 
             Chart {
-                ForEach(points) { pt in
+                ForEach(visiblePoints) { pt in
                     AreaMark(
                         x: .value("Jahr", pt.x),
                         yStart: .value("Null", 0),
@@ -3422,7 +3499,7 @@ struct SwitchAreaChartCard: View {
                     )
                     .foregroundStyle(by: .value("Zone", "Plus"))
                 }
-                ForEach(points) { pt in
+                ForEach(visiblePoints) { pt in
                     AreaMark(
                         x: .value("Jahr", pt.x),
                         yStart: .value("Minus", negativeBottom(pt)),
@@ -3432,7 +3509,7 @@ struct SwitchAreaChartCard: View {
                 }
 
                 if filter != .sprinter {
-                    ForEach(points) { pt in
+                    ForEach(visiblePoints) { pt in
                         LineMark(
                             x: .value("Jahr", pt.x),
                             y: .value("Standard", pt.standardVal),
@@ -3443,7 +3520,7 @@ struct SwitchAreaChartCard: View {
                     }
                 }
                 if filter != .standard {
-                    ForEach(points) { pt in
+                    ForEach(visiblePoints) { pt in
                         LineMark(
                             x: .value("Jahr", pt.x),
                             y: .value("Sprinter", pt.sprinterVal),
@@ -3468,17 +3545,18 @@ struct SwitchAreaChartCard: View {
                         .lineStyle(StrokeStyle(lineWidth: 1))
                 }
 
-                if filter != .sprinter, let stdX = stdCrossX {
+                if filter != .sprinter, let stdX = stdCrossX, stdX <= maxPlotYear {
                     PointMark(x: .value("Jahr", stdX), y: .value("Null", 0))
                         .foregroundStyle(Color.orange)
                         .symbolSize(55)
                 }
-                if filter != .standard, let sprX = sprCrossX {
+                if filter != .standard, let sprX = sprCrossX, sprX <= maxPlotYear {
                     PointMark(x: .value("Jahr", sprX), y: .value("Null", 0))
                         .foregroundStyle(Color.green)
                         .symbolSize(55)
                 }
             }
+            .chartXScale(domain: 0...maxPlotYear)
             .chartForegroundStyleScale([
                 "Plus": LinearGradient(
                     colors: [Color.teal.opacity(0.32), Color.teal.opacity(0.05)],
